@@ -1,13 +1,13 @@
 # ec2_jump.tf
 
-# AMI
-data "aws_ami" "al2023" {
+# AMI — Ubuntu 24.04 LTS (Noble), Canonical-owned, gp3 root volume.
+data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["amazon"]
+  owners      = ["099720109477"] # Canonical
 
   filter {
     name   = "name"
-    values = ["al2023-ami-2023.*-x86_64"]
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
   }
 
   filter {
@@ -55,7 +55,7 @@ resource "aws_vpc_security_group_egress_rule" "jump_egress_all" {
 # EC2: Jump
 # ##############################
 resource "aws_instance" "jump" {
-  ami                    = data.aws_ami.al2023.id
+  ami                    = data.aws_ami.ubuntu.id
   instance_type          = "t3.small"
   subnet_id              = aws_subnet.mgmt.id
   private_ip             = local.ec2_jump_cidr

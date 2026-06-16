@@ -1,46 +1,52 @@
 #cloud-config
 #
-# Jump host bootstrap.
+# Jump host bootstrap (Ubuntu 24.04 LTS / Noble).
 # Goal: by the end of first boot, jump can:
 #   - SSH to lb / app-vm1 / app-vm2 using the fleet key
 #   - run `ansible` and `ansible-playbook`
 #   - host Jenkins on localhost:8080 (reached from laptop via SSH tunnel)
+#   - build Go binaries (Go installed via snap to get a current version;
+#     ubuntu's apt golang-go is too old for the project's go.mod)
 #
 # Re-running cloud-init is NOT supported. To change anything below, either
 # replace the instance (terraform taint -> apply) or use Ansible.
 
 package_update: true
+package_upgrade: false
 
-# Java 21 required by current Jenkins LTS (per https://www.jenkins.io/doc/book/installing/linux/).
+# OpenJDK 21 (Jenkins requires Java 21+ per the official install doc).
 # fontconfig is a Jenkins runtime dep for headless rendering.
+# git, ansible, wget, curl are baseline.
+# snapd is preinstalled on Ubuntu cloud images, but list it anyway for safety.
 packages:
   - git
-  - ansible-core
-  - java-21-amazon-corretto
+  - ansible
+  - openjdk-21-jre-headless
   - fontconfig
   - wget
-  - golang
+  - curl
+  - ca-certificates
+  - gnupg
+  - snapd
 
 write_files:
-  # ec2-user-owned files use defer:true so cc_users_groups runs first.
-  # Without defer, write_files runs before ec2-user exists and aborts the
-  # whole block at the first ec2-user-owned entry.
+  # ubuntu-owned files use defer:true so cc_users_groups runs first.
 
-  - path: /home/ec2-user/.ssh/${project_name}.pem
-    owner: ec2-user:ec2-user
+  - path: /home/ubuntu/.ssh/${project_name}.pem
+    owner: ubuntu:ubuntu
     permissions: "0400"
     encoding: b64
     content: ${fleet_private_key_b64}
     defer: true
 
-  - path: /home/ec2-user/.ssh/config
-    owner: ec2-user:ec2-user
+  - path: /home/ubuntu/.ssh/config
+    owner: ubuntu:ubuntu
     permissions: "0600"
     defer: true
     content: |
       Host lb app-vm1 app-vm2 ${lb_private_ip} ${app_vm1_private_ip} ${app_vm2_private_ip}
-        User ec2-user
-        IdentityFile /home/ec2-user/.ssh/${project_name}.pem
+        User ubuntu
+        IdentityFile /home/ubuntu/.ssh/${project_name}.pem
         StrictHostKeyChecking accept-new
 
   # Internal "DNS" via /etc/hosts (matches aws_design.md §8)
@@ -58,15 +64,19 @@ runcmd:
   - bash -c 'grep -q "# gitops-vm fleet" /etc/hosts || { echo "# gitops-vm fleet" >> /etc/hosts; cat /etc/hosts.fleet >> /etc/hosts; }'
 
   # Jenkins install — follows https://www.jenkins.io/doc/book/installing/linux/.
-  # The upstream .repo file declares the current GPG key URL (it rotates with
-  # the repo signing), so we fetch the .repo file as the source of truth and
-  # import whichever key it points at instead of hardcoding a key version.
-  - wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
-  - rpm --import https://pkg.jenkins.io/rpm-stable/repodata/repomd.xml.key
-  - dnf install -y jenkins
+  # The keyring file path under /etc/apt/keyrings/ is the modern apt convention
+  # (replaces the deprecated apt-key add).
+  - install -d -m 0755 /etc/apt/keyrings
+  - wget -qO /etc/apt/keyrings/jenkins-keyring.asc https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
+  - bash -c 'echo "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" > /etc/apt/sources.list.d/jenkins.list'
+  - apt-get update
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y jenkins
   - systemctl enable --now jenkins
 
-  # Clone the project repo as ec2-user. `runuser -u` is the modern equivalent
-  # of `sudo -u` and works correctly under cloud-init's runcmd context
-  # (which has no controlling TTY).
-  - runuser -u ec2-user -- git clone https://github.com/${github_owner}/${github_repo}.git /home/ec2-user/${github_repo}
+  # Go via snap — ubuntu 24.04's golang-go is 1.22, too old for go 1.25 modules.
+  # snap install go --classic gets the current stable release direct from upstream.
+  - snap install go --classic
+
+  # Clone the project repo as ubuntu user (modern equivalent of sudo -u, works
+  # under cloud-init's no-TTY runcmd context).
+  - runuser -u ubuntu -- git clone https://github.com/${github_owner}/${github_repo}.git /home/ubuntu/${github_repo}

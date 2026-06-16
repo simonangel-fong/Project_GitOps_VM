@@ -39,11 +39,11 @@ resource "local_file" "ansible_inventory" {
     apps
 
     [all:vars]
-    ansible_user=ec2-user
+    ansible_user=ubuntu
     ansible_ssh_private_key_file=~/.ssh/${local.project_name}.pem
     ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new
-    # Pin Python to the /usr/bin/python3 symlink so AL2023 minor-version bumps
-    # don't change interpreter discovery.
+    # Pin Python to the /usr/bin/python3 symlink so minor-version bumps don't
+    # change interpreter discovery.
     ansible_python_interpreter=/usr/bin/python3
   EOT
 }

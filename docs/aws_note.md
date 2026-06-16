@@ -48,5 +48,5 @@ sudo cat /var/lib/jenkins/secrets/initialAdminPassword
 ## Confirm Ansible
 
 ```sh
-
+ansible
 ```

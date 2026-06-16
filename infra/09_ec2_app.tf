@@ -52,7 +52,7 @@ resource "aws_vpc_security_group_egress_rule" "app_egress_vpc_only" {
 # EC2: App
 # ##############################
 resource "aws_instance" "app_vm1" {
-  ami                    = data.aws_ami.al2023.id
+  ami                    = data.aws_ami.ubuntu.id
   instance_type          = "t3.micro"
   subnet_id              = aws_subnet.app.id
   private_ip             = local.ec2_app_vm1_cidr
@@ -66,7 +66,7 @@ resource "aws_instance" "app_vm1" {
 }
 
 resource "aws_instance" "app_vm2" {
-  ami                    = data.aws_ami.al2023.id
+  ami                    = data.aws_ami.ubuntu.id
   instance_type          = "t3.micro"
   subnet_id              = aws_subnet.app.id
   private_ip             = local.ec2_app_vm2_cidr

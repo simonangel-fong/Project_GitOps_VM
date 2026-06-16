@@ -43,7 +43,7 @@ resource "aws_vpc_security_group_egress_rule" "lb_egress_all" {
 # EC2: LB
 # ##############################
 resource "aws_instance" "lb" {
-  ami                    = data.aws_ami.al2023.id
+  ami                    = data.aws_ami.ubuntu.id
   instance_type          = "t3.micro"
   subnet_id              = aws_subnet.dmz.id
   private_ip             = local.ec2_lb_cidr

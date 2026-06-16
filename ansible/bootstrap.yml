@@ -2,7 +2,7 @@
 # bootstrap.yml — Phase A2 / A3 of plan.md.
 #
 # Run from jump, after cloud-init has finished:
-#   cd /home/ec2-user/Project_GitOps_VM/ansible
+#   cd /home/ubuntu/Project_GitOps_VM/ansible
 #   ansible all -m ping            # sanity check the inventory
 #   ansible-playbook bootstrap.yml # run this file
 #
@@ -25,9 +25,10 @@
   become: true
   tasks:
     - name: Install nginx
-      ansible.builtin.dnf:
+      ansible.builtin.apt:
         name: nginx
         state: present
+        update_cache: true
     - name: Enable nginx (do not start — no upstream config yet)
       ansible.builtin.systemd:
         name: nginx
