@@ -18,3 +18,16 @@ terraform {
 
   backend "s3" {}
 }
+
+
+provider "aws" {
+  region  = var.region
+  profile = var.aws_profile
+
+  default_tags {
+    tags = {
+      Project   = var.name_prefix
+      ManagedBy = "terraform"
+    }
+  }
+}
