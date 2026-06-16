@@ -8,7 +8,9 @@ locals {
   ec2_lb_cidr     = "10.0.10.20"
 
   # App subnet
-  subnet_app_cidr = "10.0.20.0/24"
+  subnet_app_cidr  = "10.0.20.0/24"
+  ec2_app_vm1_cidr = "10.0.20.11"
+  ec2_app_vm2_cidr = "10.0.20.12"
 
   # mgmt subnet
   subnet_mgmt_cidr = "10.0.90.0/24"

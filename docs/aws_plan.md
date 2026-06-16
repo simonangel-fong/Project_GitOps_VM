@@ -382,10 +382,20 @@ these VMs cannot reach the outside world even outbound.
 Resources:
 
 ```hcl
+# In 03_local.tf
+locals {
+  # ...existing...
+  # App subnet
+  subnet_app_cidr  = "10.0.20.0/24"
+  ec2_app_vm1_cidr = "10.0.20.11"
+  ec2_app_vm2_cidr = "10.0.20.12"
+}
+
+# In 08_ec2_app.tf
 resource "aws_security_group" "app" { ... }
-resource "aws_vpc_security_group_ingress_rule" "app_8080_from_lb"   { ... }
-resource "aws_vpc_security_group_ingress_rule" "app_8080_from_jump" { ... }  # for healthz curl
-resource "aws_vpc_security_group_ingress_rule" "app_ssh_from_jump"  { ... }
+resource "aws_vpc_security_group_ingress_rule" "app_8080_from_lb"   { ... }  # SG-to-SG: sg-lb
+resource "aws_vpc_security_group_ingress_rule" "app_8080_from_jump" { ... }  # SG-to-SG: sg-jump (healthz curl)
+resource "aws_vpc_security_group_ingress_rule" "app_ssh_from_jump"  { ... }  # SG-to-SG: sg-jump
 resource "aws_vpc_security_group_egress_rule"  "app_egress_vpc_only" {
   cidr_ipv4   = aws_vpc.main.cidr_block   # 10.0.0.0/16, NOT 0.0.0.0/0
   ip_protocol = "-1"
@@ -395,16 +405,22 @@ resource "aws_instance" "app_vm1" {
   ami                    = data.aws_ami.al2023.id
   instance_type          = "t3.micro"
   subnet_id              = aws_subnet.app.id
-  private_ip             = "10.0.20.11"
+  private_ip             = local.ec2_app_vm1_cidr
   vpc_security_group_ids = [aws_security_group.app.id]
   key_name               = data.aws_key_pair.ansible.key_name
-  tags                   = { Name = "gitops-app-vm1", Role = "canary" }
+  tags                   = { Name = "${local.project_name}-app-vm1", Role = "canary" }
 }
 
 resource "aws_instance" "app_vm2" {
-  # identical except private_ip = "10.0.20.12", Name = gitops-app-vm2, Role = stable
+  # identical except private_ip = local.ec2_app_vm2_cidr, Name = ${local.project_name}-app-vm2, Role = stable
 }
 ```
+
+Two ingress rules to `sg-app` on port 8080 (one from `sg-lb`, one from
+`sg-jump`) look redundant but aren't — `sg-lb` carries production traffic
+while `sg-jump` is the source for the deploy pipeline's `curl
+app-vm1:8080/healthz` check. Splitting them keeps the *intent* of each
+rule visible in the SG.
 
 ### Steps
 

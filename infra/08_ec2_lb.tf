@@ -48,7 +48,7 @@ resource "aws_instance" "lb" {
   subnet_id              = aws_subnet.dmz.id
   private_ip             = local.ec2_lb_cidr
   vpc_security_group_ids = [aws_security_group.lb.id]
-  key_name               = data.aws_key_pair.ansible.key_name
+  key_name               = aws_key_pair.fleet.key_name
 
   tags = {
     Name = "${local.project_name}-lb"

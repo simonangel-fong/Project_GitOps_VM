@@ -21,12 +21,6 @@ data "aws_ami" "al2023" {
   }
 }
 
-# access key
-data "aws_key_pair" "ansible" {
-  key_name = "ansible"
-}
-
-
 # ##############################
 # SG
 # ##############################
@@ -66,7 +60,7 @@ resource "aws_instance" "jump" {
   subnet_id              = aws_subnet.mgmt.id
   private_ip             = local.ec2_jump_cidr
   vpc_security_group_ids = [aws_security_group.jump.id]
-  key_name               = data.aws_key_pair.ansible.key_name
+  key_name               = aws_key_pair.fleet.key_name
 
   tags = {
     Name = "${local.project_name}-jump"
