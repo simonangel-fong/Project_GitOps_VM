@@ -15,6 +15,14 @@ crash.*.log
 # to change depending on the environment.
 *.tfvars
 *.tfvars.json
+!*.tfvars.example
+
+# Terraform backend config (contains account-specific bucket name)
+backend.hcl
+!backend.hcl.example
+
+# SSH keypairs generated locally
+keys/
 
 # Ignore override files as they are usually used to override resources locally and so
 # are not checked in
