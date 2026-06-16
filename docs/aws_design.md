@@ -30,7 +30,7 @@ The AWS layout mirrors the canonical 3-tier on-prem network:
 | App tier has no direct internet route                    | App subnet has no IGW route; SG egress restricted to VPC   |
 | Bastion / jump host for all SSH access                   | `gitops-jump` in Mgmt subnet; fleet SSH is jump-only       |
 | Static IPs documented in IPAM, hostnames in internal DNS | Static private IPs; `/etc/hosts` snippet pushed by Ansible |
-| VMs ship from a golden template (vSphere / kickstart)    | Packer-baked AL2023 AMI (see §7)                           |
+| VMs ship from a golden template (vSphere / kickstart)    | Stock AL2023 AMI + Ansible bootstrap (see §7); Packer deferred to v2 |
 | Control plane co-located on "utility servers"            | Jenkins + Ansible + jump duties on a single Mgmt-zone VM   |
 | Change control via tickets and approvals                 | Replaced by Git commits as the change record (the point)   |
 
@@ -88,8 +88,8 @@ management network is an on-prem habit worth borrowing.
 | App canary | `gitops-app-vm1` | `app-vm1`    | `t3.micro` | App    | 10.0.20.11 | none      |
 | App stable | `gitops-app-vm2` | `app-vm2`    | `t3.micro` | App    | 10.0.20.12 | none      |
 
-- **AMI**: AL2023, baked by Packer (see §7). Fallback: latest AL2023 via SSM
-  parameter `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`.
+- **AMI**: latest AL2023, resolved at apply time via `data "aws_ami"` filter
+  (owner Amazon, name pattern `al2023-ami-2023.*-x86_64`). See §7.
 - **Static private IPs** set explicitly on every `aws_instance` so the
   Ansible inventory and `/etc/hosts` snippet stay stable across
   `terraform apply` runs.
@@ -137,29 +137,26 @@ Points worth flagging because they're easy to miss:
 - **No Jenkins SG ingress for 8080.** Jenkins is reached only via SSH
   tunnel, so port 8080 stays bound to localhost on the jump host.
 
-## 7. Bootstrap — Packer Golden AMI
+## 7. Bootstrap — Stock AL2023 AMI
 
-App VMs in a true private subnet means `dnf install` does not work at first
-boot. Three options were considered:
+VMs boot from the latest official Amazon Linux 2023 AMI, resolved at
+`terraform apply` time via a `data "aws_ami"` lookup. No image baking.
 
-| Option                         | On-prem analog               | Chosen? |
-| ------------------------------ | ---------------------------- | ------- |
-| Packer-baked golden AMI        | vSphere template / kickstart | **Yes** |
-| S3 + Gateway VPC endpoint      | Internal `dnf` mirror        | No      |
-| Throwaway NAT during bootstrap | None — cloud kludge          | No      |
+**Why not Packer.** Packer was considered and rejected for v1. The honest
+audit: stock AL2023 already ships with everything this project needs at
+first boot — `python3` (for Ansible), `cloud-init` (for `user_data`),
+`chronyd` (time sync), sshd with sane defaults (no root login, no password
+auth). The only thing missing is the `appuser` account, and Ansible
+creates it in one task. A pre-baked AMI would have added a tool and a
+~10-minute build step for one task's worth of savings.
 
-Packer wins because **"we ship VMs from a golden template" is the single
-most recognizable on-prem pattern** and adds Packer to the toolchain at
-small cost.
+Crucially, the app itself is a **statically-linked Go binary** — there is
+nothing to `dnf install` on the app VMs at any point. Ansible converges
+everything over SSH from the jump host. App VMs never need internet.
 
-The Packer image contains:
-
-- `python3` (so Ansible can run without a bootstrap install)
-- `dnf`-managed base packages: `curl`, `tar`, `chrony`
-- `appuser` account created (no SSH key yet — injected per-VM via user_data)
-- Hardened sshd config (no root login, no password auth)
-- Nothing else — the AMI is intentionally minimal; everything role-specific
-  is converged by Ansible
+Packer is listed in README v2 future work for the *narrative* reason:
+"ship from a golden template" is a recognizable on-prem pattern worth
+demonstrating once the v1 demo is working.
 
 `user_data` on each instance does the bare minimum:
 
@@ -167,6 +164,10 @@ The Packer image contains:
 2. Write the `/etc/hosts` snippet for the four-host fleet.
 3. Drop the jump's SSH public key into `appuser`'s `authorized_keys`
    (app + LB VMs only; not jump itself).
+
+Everything else — creating `appuser`, installing the app binary, writing
+systemd units, templating nginx config — is Ansible's job, run from jump
+over SSH.
 
 No application config, no package installs. The line between "image" and
 "convergence" is exactly where an on-prem team would draw it.
@@ -221,14 +222,11 @@ infra/
 ├── main.tf              provider, VPC, IGW, subnets, route tables
 ├── security.tf          the 3 SGs
 ├── instances.tf         4 aws_instance + 2 EIPs + 2 key_pair + tls_private_key
-├── ami.tf               data source for the Packer AMI (with AL2023 SSM fallback)
+├── ami.tf               data source for latest AL2023 AMI
 ├── inventory.tf         local_file rendering ansible/inventory.ini + /etc/hosts snippet
 ├── outputs.tf           public IPs, private IPs, ssh + tunnel command hints
 ├── variables.tf         admin_cidr, region, instance sizes, key paths
 └── terraform.tfvars.example
-
-packer/
-└── al2023-base.pkr.hcl  golden AMI definition (see §7)
 ```
 
 `inventory.tf` writing `ansible/inventory.ini` directly closes the
@@ -249,8 +247,8 @@ approximate):
 | Data transfer (demo traffic) | minimal  | <$1             |
 | **Total**                    |          | **~$50/mo**     |
 
-Recommendation: `terraform destroy` between demo sessions. The Packer AMI
-persists in your account so re-provisioning takes minutes.
+Recommendation: `terraform destroy` between demo sessions. Re-provisioning
+takes minutes because AMI lookup is just an API call, no image build.
 
 ## 12. Open Questions
 
@@ -259,9 +257,6 @@ Settle before drafting Terraform:
 1. **`var.admin_cidr`** — your home IP/32 only, or a wider range?
 2. **Jenkins access** — confirm SSH tunnel only (recommended), or also
    open 8080 on `sg-jump` to `var.admin_cidr`?
-3. **AMI baking cadence** — bake once and pin the AMI ID in
-   `terraform.tfvars`, or bake-on-every-apply via a `null_resource`?
-   Recommend pin-the-ID for a portfolio repo (reproducible, auditable).
 
 ## 13. Out of Scope for v1
 
@@ -270,7 +265,8 @@ Called out so the gaps read as deliberate, not as oversights:
 - Multi-AZ, multi-region, HA Jenkins
 - TLS on the LB (no cert-manager / ACM noise; the GitOps story is the point)
 - VPC Flow Logs, CloudTrail, GuardDuty
-- Internal patch mirror (the Packer AMI is the stand-in for v1)
+- Internal patch mirror (app VMs install nothing at runtime; the Go binary is static)
+- Packer-baked golden AMI (the on-prem "golden template" pattern; deferred to v2)
 - Agent-based monitoring (Prometheus + node_exporter is the v2 add-on)
 - SSH cert authority / session recording on the jump host
 - Backup target on the Mgmt subnet

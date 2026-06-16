@@ -1,14 +1,18 @@
+# vpc.tf
 locals {
-  az = "${var.region}a"
+  az = "${local.aws_region}a"
 }
 
+# ##############################
+# VPC
+# ##############################
 resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
+  cidr_block           = local.subnet_vpc_cidr
   enable_dns_support   = true
   enable_dns_hostnames = true
 
   tags = {
-    Name = "${var.name_prefix}-vpc"
+    Name = "${local.project_name}"
   }
 }
 
@@ -16,46 +20,58 @@ resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name = "${var.name_prefix}-igw"
+    Name = "${local.project_name}"
   }
 }
 
+# ##############################
+# Subnet: DMZ
+# ##############################
 resource "aws_subnet" "dmz" {
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.10.0/24"
+  cidr_block              = local.subnet_dmz_cidr
   availability_zone       = local.az
   map_public_ip_on_launch = true
 
   tags = {
-    Name = "${var.name_prefix}-dmz"
+    Name = "${local.project_name}-dmz"
     Tier = "dmz"
   }
 }
 
+# ##############################
+# Subnet: app
+# ##############################
 resource "aws_subnet" "app" {
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.20.0/24"
+  cidr_block              = local.subnet_app_cidr
   availability_zone       = local.az
   map_public_ip_on_launch = false
 
   tags = {
-    Name = "${var.name_prefix}-app"
+    Name = "${local.project_name}-app"
     Tier = "app"
   }
 }
 
+# ##############################
+# Subnet: mgmt
+# ##############################
 resource "aws_subnet" "mgmt" {
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.99.0/24"
+  cidr_block              = local.subnet_mgmt_cidr
   availability_zone       = local.az
   map_public_ip_on_launch = true
 
   tags = {
-    Name = "${var.name_prefix}-mgmt"
+    Name = "${local.project_name}-mgmt"
     Tier = "mgmt"
   }
 }
 
+# ##############################
+# Subnet: public router
+# ##############################
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -65,15 +81,18 @@ resource "aws_route_table" "public" {
   }
 
   tags = {
-    Name = "${var.name_prefix}-rt-public"
+    Name = "${local.project_name}-rt-public"
   }
 }
 
+# ##############################
+# Subnet: private router
+# ##############################
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name = "${var.name_prefix}-rt-private"
+    Name = "${local.project_name}-rt-private"
   }
 }
 

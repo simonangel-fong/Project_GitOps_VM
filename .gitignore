@@ -52,3 +52,5 @@ terraform.rc
 # planout
 
 *.exe
+
+tfplan

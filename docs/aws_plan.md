@@ -2,542 +2,513 @@
 
 | Field         | Value                                                |
 | ------------- | ---------------------------------------------------- |
-| Status        | Draft v1                                             |
+| Status        | Draft v2                                             |
 | Author        | Simon Fong                                           |
 | Last updated  | 2026-06-16                                           |
 | Companion doc | [aws_design.md](aws_design.md) — what we're building |
 | Scope         | Build order for the `infra/` Terraform module        |
 
-This document is the **how**. [aws_design.md](aws_design.md) is the **what
-and why** — read it first. Each phase below ends with a verification step
-so you have a working slice before moving on.
+This document is the **how**. [aws_design.md](aws_design.md) is the
+**what and why** — read it first.
+
+**Build philosophy.** Each phase from 3 onward lands one more VM that you
+can SSH into, with its SG and instance in the same file. If a phase
+breaks, you fix the one file and re-apply — no jumping back to an earlier
+phase. Inventory rendering and Ansible bootstrap are out of scope for
+this doc; they live in [plan.md](plan.md) under the Ansible milestones.
 
 ## Prerequisites
 
-Install once, locally on the workstation:
+Install once, locally:
 
-| Tool          | Min version | Purpose                              |
-| ------------- | ----------- | ------------------------------------ |
-| Terraform     | 1.7         | Provisioning                         |
-| AWS CLI v2    | 2.15        | Credentials, S3/DynamoDB bootstrap   |
-| Packer        | 1.10        | Golden AMI (Phase 2)                 |
-| `jq`          | any         | Reading Terraform outputs in scripts |
-| OpenSSH       | any         | Keypair generation, tunnel to Jenkins |
+| Tool       | Min version | Purpose                             |
+| ---------- | ----------- | ----------------------------------- |
+| Terraform  | 1.7         | Provisioning                        |
+| AWS CLI v2 | 2.15        | Credentials, state bucket bootstrap |
+| OpenSSH    | any         | SSH to jump, tunnel to Jenkins      |
 
 AWS account setup:
 
-- An IAM user (or SSO role) with admin on `ca-central-1`.
-- `aws configure --profile gitops-vm` so a named profile holds the
-  credentials. The Terraform provider block references this profile by
-  name so the default profile stays untouched.
-- Confirm region: `aws --profile gitops-vm configure get region` → `ca-central-1`.
+- IAM user (or SSO role) with admin on `ca-central-1`.
+- `aws configure --profile gitops-vm` so the named profile exists.
+- Confirm: `aws --profile gitops-vm sts get-caller-identity` returns your
+  account.
 
-Local repo prep:
+SSH keypair: this project uses an **existing** AWS keypair named
+`ansible`. Confirm it exists and you have the private half locally:
+
+```powershell
+aws --profile gitops-vm ec2 describe-key-pairs `
+  --key-names ansible --query "KeyPairs[].KeyName"
+ls ~/.ssh/ansible    # or wherever the private key lives
+```
+
+Local repo prep (one-time):
+
+```powershell
+echo "keys/"        >> .gitignore
+echo "*.tfstate*"   >> .gitignore
+echo ".terraform/"  >> .gitignore
+echo "backend.hcl"  >> .gitignore
+echo "*.tfvars"     >> .gitignore
+echo "!*.example"   >> .gitignore
+echo "tfplan"       >> .gitignore
+```
+
+## File naming convention
+
+`infra/` uses a numeric prefix so `ls` sorts in read-order:
 
 ```
-mkdir -p infra packer keys
-echo "keys/" >> .gitignore
-echo "*.tfstate*" >> .gitignore
-echo ".terraform/" >> .gitignore
+01_variables.tf      inputs (admin_cidr only)
+02_providers.tf      terraform + provider config + backend
+03_local.tf          locals (region, project name, all CIDRs, static IPs)
+04_output.tf         outputs
+05_vpc.tf            Phase 2 — network (VPC, IGW, subnets, RTs)
+06_ec2_jump.tf       Phase 3 — jump host  (AMI + keypair data + sg + instance + EIP)
+07_ec2_lb.tf         Phase 4 — load balancer (sg + instance + EIP)
+08_ec2_app.tf        Phase 5 — app VMs (sg + 2× instance)
 ```
 
-## Phase 0 — Remote State Bootstrap
+One file per role from Phase 2 onward. Each EC2 file contains the SG, the
+instance, and (if applicable) the EIP for that role.
 
-Terraform state holds secrets (private keys, IPs) and must not live in the
-repo. Standard pattern on AWS: S3 bucket for state + DynamoDB table for
-locking. This phase creates them **outside** the main Terraform module
-(chicken-and-egg: the module can't manage the bucket that holds its own
+**Locals vs variables.** Almost everything is a `local` in [03_local.tf](../infra/03_local.tf):
+region, project name, all subnet CIDRs, all static private IPs. The only
+input variable is `admin_cidr` because it's environment-specific (your
+workstation IP) and must not be committed.
+
+---
+
+## Phase 1 — Bootstrap
+
+Set up the Terraform plumbing: remote state backend, provider config,
+input variables. Ends with `terraform plan` printing a clean no-op
+against an empty configuration.
+
+### Why remote state
+
+Terraform state holds secrets (private IPs, sensitive outputs) and must
+not live in the repo. Standard AWS pattern: S3 for the state object,
+DynamoDB for the lock. Created **outside** the Terraform module
+(chicken-and-egg: the module cannot manage the bucket that holds its own
 state).
 
 ### Steps
 
-1. Pick globally-unique names. Suggested:
-   - Bucket: `gitops-vm-tfstate-<your-initials>-<6-digit-suffix>`
-   - DynamoDB table: `gitops-vm-tflock`
+**1. Create the state bucket and lock table** (run once, ever):
 
-2. Create the bucket with versioning + encryption + public-access block,
-   then the lock table. One-shot script (run once, never again):
+```powershell
+$REGION  = "ca-central-1"
+$BUCKET  = "simonangelfong-terraform-backend"
+$TABLE   = "gitops-vm-tflock"
+$PROFILE = "gitops-vm"
 
-   ```bash
-   REGION=ca-central-1
-   BUCKET=gitops-vm-tfstate-sf-481923    # change suffix
-   TABLE=gitops-vm-tflock
+aws --profile $PROFILE s3api create-bucket `
+  --bucket $BUCKET --region $REGION `
+  --create-bucket-configuration LocationConstraint=$REGION
 
-   aws --profile gitops-vm s3api create-bucket \
-     --bucket "$BUCKET" --region "$REGION" \
-     --create-bucket-configuration LocationConstraint="$REGION"
+aws --profile $PROFILE s3api put-bucket-versioning `
+  --bucket $BUCKET --versioning-configuration Status=Enabled
 
-   aws --profile gitops-vm s3api put-bucket-versioning \
-     --bucket "$BUCKET" --versioning-configuration Status=Enabled
+aws --profile $PROFILE s3api put-public-access-block `
+  --bucket $BUCKET --public-access-block-configuration `
+  "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
 
-   aws --profile gitops-vm s3api put-bucket-encryption \
-     --bucket "$BUCKET" --server-side-encryption-configuration \
-     '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-
-   aws --profile gitops-vm s3api put-public-access-block \
-     --bucket "$BUCKET" --public-access-block-configuration \
-     "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
-
-   aws --profile gitops-vm dynamodb create-table \
-     --table-name "$TABLE" --region "$REGION" \
-     --attribute-definitions AttributeName=LockID,AttributeType=S \
-     --key-schema AttributeName=LockID,KeyType=HASH \
-     --billing-mode PAY_PER_REQUEST
-   ```
-
-3. Record the bucket name in `infra/backend.hcl` (gitignored — contains an
-   account-specific identifier):
-
-   ```hcl
-   bucket         = "gitops-vm-tfstate-sf-481923"
-   key            = "infra/terraform.tfstate"
-   region         = "ca-central-1"
-   dynamodb_table = "gitops-vm-tflock"
-   encrypt        = true
-   ```
-
-   Add `infra/backend.hcl` to `.gitignore`. Commit a `backend.hcl.example`
-   instead.
-
-### Verification
-
-```bash
-aws --profile gitops-vm s3 ls | grep gitops-vm-tfstate
-aws --profile gitops-vm dynamodb describe-table --table-name gitops-vm-tflock \
-  --query 'Table.TableStatus'   # should print "ACTIVE"
+aws --profile $PROFILE dynamodb create-table `
+  --table-name $TABLE --region $REGION `
+  --attribute-definitions AttributeName=LockID,AttributeType=S `
+  --key-schema AttributeName=LockID,KeyType=HASH `
+  --billing-mode PAY_PER_REQUEST
 ```
 
-## Phase 1 — Terraform Skeleton + Backend Init
+**2. Create the Terraform skeleton** under `infra/`:
 
-Create the module skeleton, wire the backend, get `terraform plan` to a
-clean no-op against an empty config.
+| File                       | Purpose                                                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------------ |
+| `01_variables.tf`          | `admin_cidr` only (workstation IP, environment-specific)                                         |
+| `02_providers.tf`          | `terraform` block (versions + S3 backend), `provider "aws"` (reads `local.aws_region` + profile) |
+| `03_local.tf`              | `aws_region`, `project_name`, all subnet CIDRs, all static private IPs                           |
+| `04_output.tf`             | outputs (filled in by later phases)                                                              |
+| `backend.hcl`              | bucket/region/profile values for `terraform init` (gitignored)                                   |
+| `terraform.tfvars`         | `admin_cidr` value (gitignored; starts as placeholder)                                           |
+| `terraform.tfvars.example` | committed template                                                                               |
 
-### Files to create
+**3. Initialize and verify**:
 
-```
-infra/
-├── versions.tf          terraform + provider version pins, backend block
-├── providers.tf         aws provider with profile + region
-├── variables.tf         admin_cidr, region (with default), name_prefix
-├── terraform.tfvars     local values (gitignored)
-└── terraform.tfvars.example
-```
-
-`versions.tf` — pin versions and declare the backend:
-
-```hcl
-terraform {
-  required_version = ">= 1.7"
-  required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 5.60" }
-    tls = { source = "hashicorp/tls", version = "~> 4.0" }
-  }
-  backend "s3" {}   # config supplied via -backend-config=backend.hcl
-}
-```
-
-`providers.tf`:
-
-```hcl
-provider "aws" {
-  region  = var.region
-  profile = "gitops-vm"
-  default_tags {
-    tags = {
-      Project   = "gitops-vm"
-      ManagedBy = "terraform"
-    }
-  }}
-```
-
-### Steps
-
-```bash
+```powershell
 cd infra
 terraform init -backend-config=backend.hcl
 terraform validate
-terraform plan      # should print "No changes."
+terraform plan       # must print "No changes."
 ```
 
 ### Verification
 
-```bash
-aws --profile gitops-vm s3 ls "s3://$BUCKET/infra/"   # state object exists
+```powershell
+aws --profile gitops-vm s3 ls s3://simonangelfong-terraform-backend/
+aws --profile gitops-vm dynamodb describe-table `
+  --table-name gitops-vm-tflock --query "Table.TableStatus"
 ```
 
-## Phase 2 — Packer Golden AMI
+State object lives at `s3://simonangelfong-terraform-backend/gitops-vm/infra/terraform.tfstate`
+after the first apply.
 
-The App subnet has no internet route, so VMs must boot from an image that
-already contains everything Ansible needs. Build the AMI once; pin its ID
-in `terraform.tfvars`.
+---
 
-### Files
+## Phase 2 — Network
 
-```
-packer/
-├── al2023-base.pkr.hcl
-└── README.md
-```
+VPC, IGW, three subnets (DMZ, App, Mgmt), two route tables (public,
+private). No instances, no SGs yet.
 
-`al2023-base.pkr.hcl` (skeleton — fill in source AMI lookup):
+### File
 
-```hcl
-packer {
-  required_plugins {
-    amazon = { source = "github.com/hashicorp/amazon", version = "~> 1.3" }
-  }
-}
+`infra/05_vpc.tf`
 
-source "amazon-ebs" "al2023" {
-  profile       = "gitops-vm"
-  region        = "ca-central-1"
-  instance_type = "t3.micro"
-  ssh_username  = "ec2-user"
-  ami_name      = "gitops-vm-base-{{timestamp}}"
-  source_ami_filter {
-    filters = {
-      name                = "al2023-ami-2023.*-x86_64"
-      virtualization-type = "hvm"
-      root-device-type    = "ebs"
-    }
-    most_recent = true
-    owners      = ["amazon"]
-  }
-  tags = { Project = "gitops-vm", Role = "base" }
-}
-
-build {
-  sources = ["source.amazon-ebs.al2023"]
-  provisioner "shell" {
-    inline = [
-      "sudo dnf -y update",
-      "sudo dnf -y install python3 curl tar chrony",
-      "sudo useradd -m -s /bin/bash appuser",
-      "sudo sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config",
-      "sudo sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config",
-    ]
-  }}
-```
-
-### Steps
-
-```bash
-cd packer
-packer init al2023-base.pkr.hcl
-packer validate al2023-base.pkr.hcl
-packer build al2023-base.pkr.hcl     # ~5–8 min; prints the new AMI ID at end
-```
-
-Record the printed AMI ID in `infra/terraform.tfvars`:
-
-```hcl
-base_ami_id = "ami-0abc123def456789a"
-```
-
-### Verification
-
-```bash
-aws --profile gitops-vm ec2 describe-images --owners self \
-  --filters "Name=tag:Project,Values=gitops-vm" \
-  --query 'Images[].[ImageId,Name,CreationDate]' --output table
-```
-
-## Phase 3 — VPC, Subnets, Routing
-
-First Terraform-managed resources. Goal: VPC with three subnets and two
-route tables, no instances yet.
-
-### Files
-
-```
-infra/
-└── network.tf
-```
-
-Resources to declare (see [aws_design.md §4](aws_design.md) for the spec):
+Resources (see [aws_design.md §4](aws_design.md) for the spec):
 
 - `aws_vpc.main` — `10.0.0.0/16`, DNS hostnames + support on
 - `aws_internet_gateway.main`
-- `aws_subnet.dmz`  — `10.0.10.0/24`, AZ `ca-central-1a`, map_public_ip on
-- `aws_subnet.app`  — `10.0.20.0/24`, AZ `ca-central-1a`, map_public_ip off
-- `aws_subnet.mgmt` — `10.0.99.0/24`, AZ `ca-central-1a`, map_public_ip on
+- `aws_subnet.dmz` — `10.0.10.0/24`, `map_public_ip_on_launch = true`
+- `aws_subnet.app` — `10.0.20.0/24`, `map_public_ip_on_launch = false`
+- `aws_subnet.mgmt` — `10.0.90.0/24`, `map_public_ip_on_launch = true`
 - `aws_route_table.public` — `0.0.0.0/0` → IGW
-- `aws_route_table.private` — local only (no extra routes)
-- `aws_route_table_association` — DMZ + Mgmt → public; App → private
-
-Naming: tag every resource `Name = "${var.name_prefix}-<role>"` so the AWS
-console reads cleanly.
+- `aws_route_table.private` — local only, no default route
+- Three `aws_route_table_association` (DMZ + Mgmt → public; App → private)
 
 ### Steps
 
-```bash
+```powershell
 terraform plan -out tfplan
 terraform apply tfplan
 ```
 
 ### Verification
 
-```bash
-aws --profile gitops-vm ec2 describe-vpcs \
-  --filters "Name=tag:Project,Values=gitops-vm" \
-  --query 'Vpcs[].[VpcId,CidrBlock]' --output table
-
-aws --profile gitops-vm ec2 describe-subnets \
-  --filters "Name=tag:Project,Values=gitops-vm" \
-  --query 'Subnets[].[Tags[?Key==`Name`]|[0].Value,CidrBlock,MapPublicIpOnLaunch]' \
+```powershell
+aws --profile gitops-vm ec2 describe-subnets `
+  --filters "Name=tag:Project,Values=gitops-vm" `
+  --query "Subnets[].[Tags[?Key=='Name']|[0].Value,CidrBlock,MapPublicIpOnLaunch]" `
   --output table
+
+# Critical: App subnet has NO 0.0.0.0/0 route
+aws --profile gitops-vm ec2 describe-route-tables `
+  --filters "Name=tag:Name,Values=gitops-vm-rt-private" `
+  --query "RouteTables[].Routes" --output table
+# Should show only the 10.0.0.0/16 local route, no igw-*
 ```
 
-App subnet should show `MapPublicIpOnLaunch: False`.
+Cost: $0/mo. VPC, subnets, RTs, IGW are all free.
 
-## Phase 4 — Security Groups
+---
 
-Role-scoped SGs as specified in [aws_design.md §6](aws_design.md).
+## Phase 3 — Jump Host
+
+First VM. Lives in the Mgmt subnet, has an EIP, accepts SSH from
+`var.admin_cidr` only. This is the only VM you SSH to from your laptop;
+all subsequent phases reach their VMs _through_ it.
 
 ### Files
 
-```
-infra/
-└── security.tf
-```
+- `infra/03_local.tf` — adds `ec2_jump_cidr` to the locals block
+- `infra/06_ec2_jump.tf` — AMI + keypair data sources + `sg-jump` + `aws_instance.jump` + `aws_eip.jump`
 
-Three SG resources (`sg-jump`, `sg-lb`, `sg-app`) plus their ingress/egress
-rules as separate `aws_security_group_rule` resources (easier to diff than
-inline blocks).
-
-The non-obvious rules — easy to forget, will burn you in Phase 6:
-
-- `sg-app` ingress 8080 from `sg-jump` (for the healthz curl)
-- `sg-app` egress restricted to `10.0.0.0/16` (not all)
-
-### Steps
-
-```bash
-terraform plan -out tfplan
-terraform apply tfplan
-```
-
-### Verification
-
-```bash
-aws --profile gitops-vm ec2 describe-security-groups \
-  --filters "Name=tag:Project,Values=gitops-vm" \
-  --query 'SecurityGroups[].[GroupName,GroupId]' --output table
-```
-
-## Phase 5 — Keypairs
-
-Two keypairs as specified in [aws_design.md §9](aws_design.md): one
-local-generated for laptop→jump, one Terraform-generated for jump→fleet.
-
-### Steps
-
-1. Generate the admin keypair locally (once):
-
-   ```bash
-   ssh-keygen -t ed25519 -f keys/gitops-admin -N "" -C "gitops-vm-admin"
-   ```
-
-2. Add to `infra/keys.tf`:
-
-   ```hcl
-   resource "aws_key_pair" "admin" {
-     key_name   = "${var.name_prefix}-admin"
-     public_key = file("${path.module}/../keys/gitops-admin.pub")
-   }
-
-   resource "tls_private_key" "fleet" {
-     algorithm = "ED25519"
-   }
-
-   resource "aws_key_pair" "fleet" {
-     key_name   = "${var.name_prefix}-fleet"
-     public_key = tls_private_key.fleet.public_key_openssh
-   }
-   ```
-
-3. `terraform apply`.
-
-### Verification
-
-```bash
-aws --profile gitops-vm ec2 describe-key-pairs \
-  --filters "Name=tag:Project,Values=gitops-vm" \
-  --query 'KeyPairs[].[KeyName,KeyType]' --output table
-```
-
-## Phase 6 — EC2 Instances + EIPs
-
-Four instances, two EIPs. User-data does the bare minimum:
-set hostname, write `/etc/hosts`, install the fleet key into `appuser`'s
-`authorized_keys` (app + LB only — jump has the private key, doesn't need
-the fleet key in its own authorized_keys).
-
-### Files
-
-```
-infra/
-├── instances.tf
-└── templates/
-    ├── user_data_jump.sh.tftpl
-    └── user_data_fleet.sh.tftpl
-```
-
-For each instance set explicitly:
-
-- `ami           = var.base_ami_id`
-- `instance_type` per the table in [aws_design.md §5](aws_design.md)
-- `subnet_id`    matching the role
-- `private_ip`   the static value from the design
-- `vpc_security_group_ids` for the matching SG
-- `key_name     = aws_key_pair.admin.key_name`  (jump only;
-   fleet VMs don't need a console-attached key — they're reached via jump's
-   fleet keypair injected through user_data)
-- `user_data`   templatefile with the fleet public key, hostname, /etc/hosts
-- `tags         = { Name = "gitops-jump" }` etc.
-
-Two `aws_eip` + `aws_eip_association` for jump and lb.
-
-### Steps
-
-```bash
-terraform plan -out tfplan
-terraform apply tfplan
-```
-
-### Verification
-
-```bash
-terraform output jump_public_ip
-ssh -i keys/gitops-admin ec2-user@$(terraform output -raw jump_public_ip) \
-  'hostname && cat /etc/hosts'
-```
-
-From `jump`, confirm the fleet keypair reaches app-vm1:
-
-```bash
-# on jump
-ssh appuser@app-vm1 'hostname'   # should print app-vm1
-```
-
-If this fails, check (in order): /etc/hosts on jump, sg-jump → sg-app SSH
-rule, fleet private key written to `~/.ssh/id_ed25519` on jump by user_data.
-
-## Phase 7 — Render Ansible Inventory
-
-Close the Terraform → Ansible loop. Terraform writes
-`ansible/inventory.ini` directly via `local_file`.
-
-### Files
-
-```
-infra/
-├── inventory.tf
-└── templates/
-    └── inventory.ini.tftpl
-```
-
-`inventory.tf`:
+Resources:
 
 ```hcl
-resource "local_file" "ansible_inventory" {
-  filename = "${path.module}/../ansible/inventory.ini"
-  content  = templatefile("${path.module}/templates/inventory.ini.tftpl", {
-    jump_ip    = aws_instance.jump.private_ip
-    lb_ip      = aws_instance.lb.private_ip
-    app_vm1_ip = aws_instance.app_vm1.private_ip
-    app_vm2_ip = aws_instance.app_vm2.private_ip
-  })
-  file_permission = "0644"
+# In 03_local.tf
+locals {
+  # ...existing CIDRs...
+  ec2_jump_cidr = "10.0.90.10"
+}
+
+# In 06_ec2_jump.tf
+data "aws_ami" "al2023"       { ... }   # AL2023 lookup
+data "aws_key_pair" "ansible" { key_name = "ansible" }
+
+resource "aws_security_group" "jump" { ... }
+resource "aws_vpc_security_group_ingress_rule" "jump_ssh_from_admin" { ... }
+resource "aws_vpc_security_group_egress_rule"  "jump_egress_all"     { ... }
+
+resource "aws_instance" "jump" {
+  ami                    = data.aws_ami.al2023.id
+  instance_type          = "t3.small"
+  subnet_id              = aws_subnet.mgmt.id
+  private_ip             = local.ec2_jump_cidr
+  vpc_security_group_ids = [aws_security_group.jump.id]
+  key_name               = data.aws_key_pair.ansible.key_name
+  tags                   = { Name = "${local.project_name}-jump", Role = "jump" }
+}
+
+resource "aws_eip" "jump" {
+  instance = aws_instance.jump.id
+  domain   = "vpc"
+  tags     = { Name = "${local.project_name}-jump-eip" }
 }
 ```
 
-### Verification
+Data sources live in the file that first needs them (AMI + keypair are used
+by every EC2 phase, but they're declared in `06_ec2_jump.tf` since jump is
+the first VM). Later phases reference them by the same `data.aws_ami.al2023`
+/ `data.aws_key_pair.ansible` addresses.
 
-```bash
-terraform apply
-cat ../ansible/inventory.ini       # hostnames per aws_design.md §8
+### Prerequisite
+
+Set `admin_cidr` in `infra/terraform.tfvars` to your workstation IP:
+
+```powershell
+(Invoke-WebRequest -Uri https://checkip.amazonaws.com -UseBasicParsing).Content.Trim()
+# Then edit infra/terraform.tfvars:
+# admin_cidr = "<that-ip>/32"
 ```
 
-## Phase 8 — Outputs
+### Steps
 
-`infra/outputs.tf`:
+```powershell
+terraform plan -out tfplan
+terraform apply tfplan
+```
+
+### Verification
+
+```powershell
+terraform output jump_public_ip   # add this output in 04_output.tf
+
+ssh -i ~/.ssh/ansible ec2-user@<jump-public-ip> 'hostname && uname -a'
+```
+
+If SSH hangs: your public IP changed (re-run `checkip.amazonaws.com`,
+update `admin_cidr`, re-apply). If "permission denied": confirm the
+`ansible` keypair private half is at `~/.ssh/ansible` and `chmod 400`.
+
+Cost from this phase on: ~$17/mo for the `t3.small` + ~$3/mo for the EBS
+volume. EIP free while attached.
+
+---
+
+## Phase 4 — Load Balancer
+
+Public-facing nginx VM in the DMZ subnet. Reached on port 80 from the
+internet; SSH only from jump.
+
+### Files
+
+- `infra/03_local.tf` — adds `ec2_lb_cidr = "10.0.10.20"` to the locals block
+- `infra/07_ec2_lb.tf` — `sg-lb` + `aws_instance.lb` + `aws_eip.lb`
+
+Resources:
+
+```hcl
+# In 03_local.tf
+locals {
+  # ...existing...
+  ec2_lb_cidr = "10.0.10.20"
+}
+
+# In 07_ec2_lb.tf
+resource "aws_security_group" "lb" { ... }
+resource "aws_vpc_security_group_ingress_rule" "lb_http_from_world" { ... }
+resource "aws_vpc_security_group_ingress_rule" "lb_ssh_from_jump"   { ... }
+resource "aws_vpc_security_group_egress_rule"  "lb_egress_all"      { ... }
+
+resource "aws_instance" "lb" {
+  ami                    = data.aws_ami.al2023.id
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.dmz.id
+  private_ip             = local.ec2_lb_cidr
+  vpc_security_group_ids = [aws_security_group.lb.id]
+  key_name               = data.aws_key_pair.ansible.key_name
+  tags                   = { Name = "${local.project_name}-lb", Role = "lb" }
+}
+
+resource "aws_eip" "lb" {
+  instance = aws_instance.lb.id
+  domain   = "vpc"
+  tags     = { Name = "${local.project_name}-lb-eip" }
+}
+```
+
+The `lb_ssh_from_jump` rule uses `referenced_security_group_id =
+aws_security_group.jump.id` — SG-to-SG reference, not a CIDR. This is the
+on-prem-style bastion pattern: SSH access flows by *role* (jump → lb), not
+by IP.
+
+### Steps
+
+```powershell
+terraform plan -out tfplan
+terraform apply tfplan
+```
+
+### Verification
+
+```powershell
+terraform output lb_public_ip
+
+# From your laptop: port 80 reachable (will fail-to-connect until Ansible installs nginx, but the SG is open)
+nc -zv <lb-public-ip> 80
+
+# From jump: SSH to lb works
+ssh -i ~/.ssh/ansible ec2-user@<jump-public-ip> `
+  "ssh -o StrictHostKeyChecking=accept-new ec2-user@10.0.10.20 hostname"
+```
+
+Wait — jump can't SSH to lb yet because jump doesn't have the `ansible`
+private key in `~/.ssh/`. That's an **Ansible-layer concern** (handled by
+the bootstrap playbook in [plan.md](plan.md) Phase A). For now, verify
+network reachability only:
+
+```powershell
+ssh -i ~/.ssh/ansible ec2-user@<jump-public-ip> `
+  "nc -zv 10.0.10.20 22"
+# "Connection to 10.0.10.20 port 22 [tcp/ssh] succeeded!"
+```
+
+Cost: +~$8/mo (`t3.micro` + EBS).
+
+---
+
+## Phase 5 — App VMs
+
+Two app VMs in the App subnet. **No EIPs, no public IPs** — reachable
+only from inside the VPC. App subnet has no route to the internet, so
+these VMs cannot reach the outside world even outbound.
+
+### Files
+
+- `infra/03_local.tf` — adds `ec2_app_vm1_cidr = "10.0.20.11"` and `ec2_app_vm2_cidr = "10.0.20.12"`
+- `infra/08_ec2_app.tf` — `sg-app` + `aws_instance.app_vm1` + `aws_instance.app_vm2`
+
+Resources:
+
+```hcl
+resource "aws_security_group" "app" { ... }
+resource "aws_vpc_security_group_ingress_rule" "app_8080_from_lb"   { ... }
+resource "aws_vpc_security_group_ingress_rule" "app_8080_from_jump" { ... }  # for healthz curl
+resource "aws_vpc_security_group_ingress_rule" "app_ssh_from_jump"  { ... }
+resource "aws_vpc_security_group_egress_rule"  "app_egress_vpc_only" {
+  cidr_ipv4   = aws_vpc.main.cidr_block   # 10.0.0.0/16, NOT 0.0.0.0/0
+  ip_protocol = "-1"
+}
+
+resource "aws_instance" "app_vm1" {
+  ami                    = data.aws_ami.al2023.id
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.app.id
+  private_ip             = "10.0.20.11"
+  vpc_security_group_ids = [aws_security_group.app.id]
+  key_name               = data.aws_key_pair.ansible.key_name
+  tags                   = { Name = "gitops-app-vm1", Role = "canary" }
+}
+
+resource "aws_instance" "app_vm2" {
+  # identical except private_ip = "10.0.20.12", Name = gitops-app-vm2, Role = stable
+}
+```
+
+### Steps
+
+```powershell
+terraform plan -out tfplan
+terraform apply tfplan
+```
+
+### Verification
+
+```powershell
+# From jump: confirm app VMs are reachable on SSH and 8080
+ssh -i ~/.ssh/ansible ec2-user@<jump-public-ip> `
+  "nc -zv 10.0.20.11 22 && nc -zv 10.0.20.12 22"
+
+# From jump: confirm app-vm1 has NO internet
+ssh -i ~/.ssh/ansible ec2-user@<jump-public-ip> `
+  "nc -zv 10.0.20.11 8080"   # SG allows; service not yet running → connection refused
+```
+
+The "no internet" check needs SSH all the way to app-vm1, which depends
+on jump having the keypair — Ansible-layer. Defer to Phase 6 smoke test
+(or to the Ansible bootstrap milestone).
+
+Cost: +~$16/mo (2× `t3.micro` + EBS).
+
+---
+
+## Phase 6 — Outputs, Smoke Test, Teardown
+
+Finalize outputs (so the demo runbook is copy-pasteable) and verify the
+whole AWS layer end-to-end. After this, control passes to the Ansible
+layer in [plan.md](plan.md).
+
+### Outputs (`04_output.tf`)
 
 ```hcl
 output "jump_public_ip" { value = aws_eip.jump.public_ip }
 output "lb_public_ip"   { value = aws_eip.lb.public_ip }
-output "ssh_jump"       { value = "ssh -i keys/gitops-admin ec2-user@${aws_eip.jump.public_ip}" }
-output "jenkins_tunnel" { value = "ssh -i keys/gitops-admin -L 8080:localhost:8080 ec2-user@${aws_eip.jump.public_ip}" }
-output "lb_url"         { value = "http://${aws_eip.lb.public_ip}" }
+output "app_vm1_ip"     { value = aws_instance.app_vm1.private_ip }
+output "app_vm2_ip"     { value = aws_instance.app_vm2.private_ip }
+
+output "ssh_jump" {
+  value = "ssh -i ~/.ssh/ansible ec2-user@${aws_eip.jump.public_ip}"
+}
+
+output "jenkins_tunnel" {
+  value = "ssh -i ~/.ssh/ansible -L 8080:localhost:8080 ec2-user@${aws_eip.jump.public_ip}"
+}
 ```
 
-### Verification
+### Smoke test
 
-```bash
+```powershell
 terraform output
+$JUMP = terraform output -raw jump_public_ip
+
+# 1. Reach jump
+ssh -i ~/.ssh/ansible ec2-user@$JUMP "hostname && uname -a"
+
+# 2. From jump, port-reach all three other VMs
+ssh -i ~/.ssh/ansible ec2-user@$JUMP @"
+  for ip in 10.0.10.20 10.0.20.11 10.0.20.12; do
+    echo -n "$ip:22 "
+    nc -zv $ip 22 2>&1 | grep -o 'succeeded\|refused\|timed out'
+  done
+"@
 ```
 
-The outputs are also the start of the demo runbook — copy-paste-ready
-commands for the README.
+If all three say "succeeded" the AWS layer is done. Ansible takes over
+from here ([plan.md](plan.md) Phase A: bootstrap playbook, including
+installing the `ansible` private key on jump so it can SSH onward).
 
-## Phase 9 — Smoke Test
+### Teardown
 
-End-to-end check before handing off to the Ansible layer.
+`terraform destroy` removes everything in the module. **Does not remove**
+the S3 state bucket or DynamoDB lock table from Phase 1 — keep these
+between demo cycles so re-provisioning is fast.
 
-```bash
-# 1. Reach the jump host
-eval "$(terraform output -raw ssh_jump) 'uname -a && cat /etc/hosts'"
+To fully wipe afterward:
 
-# 2. From jump, reach every fleet VM
-eval "$(terraform output -raw ssh_jump) \
-  'for h in lb app-vm1 app-vm2; do ssh -o StrictHostKeyChecking=accept-new appuser@$h hostname; done'"
-
-# 3. Confirm app VMs have NO internet
-eval "$(terraform output -raw ssh_jump) \
-  'ssh appuser@app-vm1 \"curl -m 5 -s -o /dev/null -w %{http_code} https://example.com || echo BLOCKED\"'"
-# Expected: BLOCKED (curl times out, exits non-zero)
-
-# 4. Confirm LB reaches app VMs on 8080 (will 502 until Ansible installs the app)
-eval "$(terraform output -raw ssh_jump) \
-  'ssh ec2-user@lb \"curl -m 5 -s -o /dev/null -w %{http_code} http://app-vm1:8080/\" '"
-# Expected: 000 or connection refused (no app yet) — what matters is no SG block
-```
-
-If all four pass, the AWS layer is done and Ansible can take over.
-
-## Phase 10 — Teardown
-
-`terraform destroy` removes everything in the module. **Does not remove**:
-
-- The S3 state bucket and DynamoDB lock table (Phase 0) — keep these
-  between demo cycles so subsequent `terraform apply` runs are fast.
-- The Packer AMI (Phase 2) — pinned by ID, persists in the account.
-
-To fully wipe, after `terraform destroy`:
-
-```bash
-aws --profile gitops-vm s3 rm "s3://$BUCKET" --recursive
-aws --profile gitops-vm s3api delete-bucket --bucket "$BUCKET"
+```powershell
+aws --profile gitops-vm s3 rm s3://simonangelfong-terraform-backend --recursive
+aws --profile gitops-vm s3api delete-bucket --bucket simonangelfong-terraform-backend
 aws --profile gitops-vm dynamodb delete-table --table-name gitops-vm-tflock
-aws --profile gitops-vm ec2 deregister-image --image-id "$BASE_AMI_ID"
 ```
 
-## Phase Order Summary
+---
 
-| Phase | What                  | Output                          |
-| ----- | --------------------- | ------------------------------- |
-| 0     | Remote state          | S3 bucket + DynamoDB table      |
-| 1     | TF skeleton + init    | Empty backend, `plan` no-op     |
-| 2     | Packer AMI            | `base_ami_id` recorded          |
-| 3     | VPC + subnets         | Network reachable               |
-| 4     | Security groups       | 3 SGs                           |
-| 5     | Keypairs              | admin + fleet                   |
-| 6     | EC2 + EIPs            | 4 VMs, jump SSH works           |
-| 7     | Inventory render      | `ansible/inventory.ini`         |
-| 8     | Outputs               | Demo commands                   |
-| 9     | Smoke test            | End-to-end pass                 |
-| 10    | Teardown (when done)  | Clean account                   |
+## Phase Summary
 
-After Phase 9, the AWS layer is complete. Next milestone is the Ansible
-bootstrap playbook (covered in the project's main [plan.md](plan.md),
-Phase A).
+| Phase | What                          | Files                                                  | Cost added |
+| ----- | ----------------------------- | ------------------------------------------------------ | ---------- |
+| 1     | Bootstrap state + TF skeleton | 01–04, `backend.hcl`, `*.tfvars`                       | $0         |
+| 2     | Network                       | `05_vpc.tf`                                            | $0         |
+| 3     | Jump host                     | `06_ec2_jump.tf` (AMI + keypair data here too)         | ~$20/mo    |
+| 4     | LB                            | `07_ec2_lb.tf` (+ `ec2_lb_cidr` in `03_local.tf`)      | +~$8/mo    |
+| 5     | App VMs                       | `08_ec2_app.tf` (+ `ec2_app_vm{1,2}_cidr` in `03_local.tf`) | +~$16/mo   |
+| 6     | Outputs + smoke test          | `04_output.tf`                                         | $0         |
+
+Total: ~$45/mo if left running. `terraform destroy` between demo
+sessions keeps it near $0.
+
+After Phase 6, the AWS layer is complete. Next milestone is the Ansible
+bootstrap playbook (covered in [plan.md](plan.md), Phase A) — including
+inventory rendering, `/etc/hosts` setup, and getting the `ansible`
+keypair onto jump so it can reach the fleet.

@@ -12,7 +12,18 @@ terraform init -backend-config=backend.hcl
 
 # Validate syntax
 terraform validate
+# terraform plan -out=tfplan
+# terraform show -json tfplan > plan.json
 
-terraform plan
+terraform apply tfplan
+terraform apply -auto-approve
+
 ```
 
+---
+
+## Connect jump
+
+```sh
+ssh -i "ansible.pem" ec2-user@ip_jump
+```
