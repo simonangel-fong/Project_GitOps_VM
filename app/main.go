@@ -1,3 +1,4 @@
+// app/main.go
 package main
 
 import "github.com/gin-gonic/gin"
@@ -5,12 +6,12 @@ import "github.com/gin-gonic/gin"
 func main() {
 	r := gin.Default()
 
-	r.GET("/", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"app":     "VM GitOps Practices",
-			"version": "dev",
-		})
-	})
+	// GET /
+	r.GET("/", rootHandler)
 
+	// GET /healthz
+	r.GET("/healthz", healthzHandler)
+
+	// port
 	r.Run(":8080")
 }
