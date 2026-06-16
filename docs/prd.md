@@ -96,11 +96,12 @@ project is demonstrating competence in).
 
 | ID   | Requirement                                                                                                                  |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------- |
-| FR-1 | A Go HTTP service exposing `GET /` returning `{"app":"VM GitOps Practices","version":"<v>"}`.                                |
+| FR-1 | A Go HTTP service (built with `gin`) exposing `GET /` returning `{"app":"VM GitOps Practices","version":"<v>"}`.              |
 | FR-2 | A Go HTTP service exposing `GET /healthz` returning `200 ok` when healthy.                                                   |
 | FR-3 | The `version` value is baked into the binary at build time via `-ldflags`, sourced from `app/VERSION`.                       |
-| FR-4 | A failure-injection switch (env var `FAIL_HEALTHZ=true`) causes `/healthz` to return `500`. Used only for the rollback demo. |
-| FR-5 | The service binds to `:8080` and runs as a non-root `appuser` under `systemd`.                                               |
+| FR-4 | A failure-injection switch is baked into the binary at build time via `-ldflags -X main.failHealthz=true`. When the flag is `true`, `/healthz` returns `500`. Default `false`. Toggling the flag = a code/release commit, preserving the GitOps story. |
+| FR-5 | The service binds to `:8080`, runs as a non-root `appuser` under `systemd`, and shuts down gracefully on `SIGTERM` (drains in-flight requests within 10s before exiting) so `systemctl restart` during a canary phase does not drop connections. |
+| FR-5a | Request logging is provided by `gin.Default()`'s default logger — one structured line per request to stdout, captured by `journalctl`. Lets the demo show per-VM traffic shifts during canary phases. |
 
 ### 6.2 Infrastructure
 
@@ -148,7 +149,7 @@ Repository layout is fixed as specified in [plan.md §Repository Layout](plan.md
 
 | ID    | Requirement                                                                                                                                                      |
 | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| NFR-1 | An nginx weight change (during a phase transition) MUST NOT drop in-flight connections. (Achieved by `nginx -s reload`, not restart.)                            |
+| NFR-1 | A canary rollout MUST NOT drop in-flight connections. Two mechanisms: (a) nginx weight changes use `nginx -s reload`, not restart; (b) the Go service handles `SIGTERM` with `http.Server.Shutdown` and a 10s drain timeout (see FR-5). |
 | NFR-2 | The canary symlink swap MUST be atomic on the target VM. (Achieved by `ln -sfn` → `mv`, not `rm` + `ln`.)                                                        |
 | NFR-3 | All Ansible playbooks MUST be idempotent — re-running with no Git change MUST produce no VM changes.                                                             |
 | NFR-4 | A reviewer with an AWS account SHOULD be able to go from `git clone` to a working LB URL in under 30 minutes, following only the README.                         |
