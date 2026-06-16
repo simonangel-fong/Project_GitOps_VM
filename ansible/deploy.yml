@@ -1,0 +1,121 @@
+---
+# deploy.yml — Phase B/D stable deploy.
+#
+# Copies a Go binary onto every app VM, writes the systemd unit, restarts the
+# service. No canary logic yet (Phase E adds that).
+#
+# Run manually from jump:
+#   ansible-playbook deploy.yml \
+#     -e binary_src=/path/to/gitops-api \
+#     -e app_version=$(cat ../app/VERSION)
+#
+# Run from Jenkins (Step 3):
+#   ansible-playbook ansible/deploy.yml \
+#     -e binary_src=${WORKSPACE}/gitops-api \
+#     -e app_version=${VERSION}
+
+- name: Deploy gitops-api to app VMs
+  hosts: apps
+  become: true
+  serial: 1                # one host at a time; clean drain on restart
+  any_errors_fatal: true   # halt the whole play if any host fails
+
+  vars_prompt:
+    - name: confirm_binary
+      prompt: "binary_src and app_version must both be set via -e. Proceed?"
+      private: false
+      default: "yes"
+      when: binary_src is not defined or app_version is not defined
+
+  pre_tasks:
+    - name: Sanity-check required extra-vars
+      ansible.builtin.assert:
+        that:
+          - binary_src is defined
+          - app_version is defined
+        fail_msg: "Pass -e binary_src=/path/to/gitops-api -e app_version=X.Y.Z"
+
+    - name: Sanity-check the binary exists on the controller
+      ansible.builtin.stat:
+        path: "{{ binary_src }}"
+      delegate_to: localhost
+      become: false
+      register: binary_stat
+
+    - name: Fail if binary missing
+      ansible.builtin.fail:
+        msg: "binary_src={{ binary_src }} does not exist on jump"
+      when: not binary_stat.stat.exists
+
+  tasks:
+    - name: Ensure /opt/app/current exists
+      ansible.builtin.file:
+        path: /opt/app/current
+        state: directory
+        owner: appuser
+        group: appuser
+        mode: "0755"
+
+    - name: Copy gitops-api binary
+      ansible.builtin.copy:
+        src: "{{ binary_src }}"
+        dest: /opt/app/current/gitops-api
+        owner: appuser
+        group: appuser
+        mode: "0755"
+      notify: Restart gitops-api
+
+    - name: Template systemd unit
+      ansible.builtin.template:
+        src: gitops-api.service.j2
+        dest: /etc/systemd/system/gitops-api.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart gitops-api
+
+    - name: Enable gitops-api (start handled by handler on first deploy)
+      ansible.builtin.systemd:
+        name: gitops-api
+        enabled: true
+
+  post_tasks:
+    - name: Flush handlers so smoke test runs against the new binary
+      ansible.builtin.meta: flush_handlers
+
+    - name: Smoke test — GET /healthz
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:8080/healthz"
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      retries: 6
+      delay: 2
+      register: healthz
+      until: healthz.status == 200
+
+    - name: Smoke test — GET / reports the expected version
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:8080/"
+        return_content: true
+      delegate_to: localhost
+      become: false
+      register: root
+
+    - name: Assert version matches
+      ansible.builtin.assert:
+        that:
+          - root.json.version == app_version
+        fail_msg: "{{ inventory_hostname }} reports {{ root.json.version }}, expected {{ app_version }}"
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart gitops-api
+      ansible.builtin.systemd:
+        name: gitops-api
+        state: restarted

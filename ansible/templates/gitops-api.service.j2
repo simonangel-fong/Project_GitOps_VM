@@ -1,0 +1,16 @@
+[Unit]
+Description=GitOps demo API ({{ app_version }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=appuser
+Group=appuser
+ExecStart=/opt/app/current/gitops-api
+Restart=on-failure
+RestartSec=2s
+Environment=PORT=8080
+
+[Install]
+WantedBy=multi-user.target

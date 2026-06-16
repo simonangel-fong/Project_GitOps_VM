@@ -1,6 +1,6 @@
 module gitops-vm
 
-go 1.26.4
+go 1.25
 
 require (
 	github.com/bytedance/gopkg v0.1.3 // indirect
