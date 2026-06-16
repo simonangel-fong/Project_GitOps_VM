@@ -21,7 +21,7 @@
       ansible.builtin.ping:
 
 - name: A3a — LB base setup
-  hosts: lb
+  hosts: lbs
   become: true
   tasks:
     - name: Install nginx
@@ -34,7 +34,7 @@
         enabled: true
 
 - name: A3b — App VM base setup
-  hosts: app
+  hosts: apps
   become: true
   tasks:
     - name: Create appuser
