@@ -99,7 +99,7 @@ project is demonstrating competence in).
 | FR-1 | A Go HTTP service (built with `gin`) exposing `GET /` returning `{"app":"VM GitOps Practices","version":"<v>"}`.              |
 | FR-2 | A Go HTTP service exposing `GET /healthz` returning `200 ok` when healthy.                                                   |
 | FR-3 | The `version` value is baked into the binary at build time via `-ldflags`, sourced from `app/VERSION`.                       |
-| FR-4 | A failure-injection switch is baked into the binary at build time via `-ldflags -X main.failHealthz=true`. When the flag is `true`, `/healthz` returns `500`. Default `false`. Toggling the flag = a code/release commit, preserving the GitOps story. |
+| FR-4 | A failure-injection switch is baked into the binary at build time via `-ldflags -X main.healthy=false`. When the flag is not `"true"`, `/healthz` returns `500`. Default `"true"`. Toggling the flag = a code/release commit, preserving the GitOps story. |
 | FR-5 | The service binds to `:8080`, runs as a non-root `appuser` under `systemd`, and shuts down gracefully on `SIGTERM` (drains in-flight requests within 10s before exiting) so `systemctl restart` during a canary phase does not drop connections. |
 | FR-5a | Request logging is provided by `gin.Default()`'s default logger — one structured line per request to stdout, captured by `journalctl`. Lets the demo show per-VM traffic shifts during canary phases. |
 
@@ -168,7 +168,7 @@ pass in a clean environment:
 | AC-3 | Committing `app/VERSION = 0.1.0` and pushing produces a build artifact `gitops-api-0.1.0` on the controller VM.                                                                                                                                                        |
 | AC-4 | Committing `deploy/release.yaml` with `version: 0.1.0` and pushing results in `curl <LB>/` returning `version: "0.1.0"` from both app VMs (verified by repeated curls).                                                                                                |
 | AC-5 | Bumping to `0.2.0` (build + release commits) produces visible weight shifts: during the 20% phase, ~1-in-5 curls to `<LB>/` return version `0.2.0`; during 50%, ~1-in-2; after promotion, 100%.                                                                        |
-| AC-6 | Pushing a release that ships with `FAIL_HEALTHZ=true` causes the deploy pipeline to detect failure within ~15s of the canary going live, run rollback, and leave `curl <LB>/` reporting the prior version on every call. The Jenkins build for the bad release is red. |
+| AC-6 | Pushing a release built with `-X main.healthy=false` causes the deploy pipeline to detect failure within ~15s of the canary going live, run rollback, and leave `curl <LB>/` reporting the prior version on every call. The Jenkins build for the bad release is red. |
 | AC-7 | Running `ansible-playbook deploy.yml` a second time with no Git change reports zero changed tasks (idempotency).                                                                                                                                                       |
 | AC-8 | The README contains: topology diagram, repo layout, the demo script (5 steps from plan.md §Demonstration Script), the explicit "out of scope" list, and a link to `docs/plan.md`.                                                                                      |
 

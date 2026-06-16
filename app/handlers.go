@@ -3,15 +3,17 @@ package main
 
 import "github.com/gin-gonic/gin"
 
-// GET /
 func rootHandler(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"app":     "VM GitOps Practices",
-		"version": "dev",
+		"version": version,
 	})
 }
 
-// GET healthz/
 func healthzHandler(c *gin.Context) {
+	if healthy != "true" {
+		c.String(500, "unhealthy")
+		return
+	}
 	c.String(200, "ok")
 }

@@ -15,7 +15,8 @@ A tiny Go HTTP service, built with `gin`, that:
 - Serves `GET /healthz` returning `200 ok` when healthy, `500` when the
   baked-in failure flag is `true`.
 - Has its `version` string baked in at build time via `-ldflags`.
-- Has a `failHealthz` boolean baked in at build time via `-ldflags`.
+- Has a `healthy` boolean baked in at build time via `-ldflags`. Default
+  `true`; a `healthy=false` build is the rollback-demo "broken" build.
 - Listens on `:8080`.
 - Shuts down gracefully on `SIGTERM` (10s drain).
 - Uses `gin.Default()` so every request logs one line to stdout.
@@ -46,12 +47,12 @@ code is structured for it:
 ```bash
 VERSION=$(cat app/VERSION)
 go build \
-  -ldflags "-X main.version=${VERSION} -X main.failHealthz=false" \
+  -ldflags "-X main.version=${VERSION} -X main.healthy=true" \
   -o gitops-api \
   ./app
 ```
 
-The "broken" rollback-demo build is the same command with `failHealthz=true`.
+The "broken" rollback-demo build is the same command with `healthy=false`.
 
 ## 3. Phases
 
@@ -116,16 +117,18 @@ Done when:
 
 ### Phase 4 — Failure-injection flag via `-ldflags`
 
-**Goal.** Baked-in `failHealthz=true` build returns `500` on `/healthz`.
+**Goal.** Baked-in `healthy=false` build returns `500` on `/healthz`.
 
 Work:
 
-1. In `main.go`, declare `var failHealthz = "false"` (string, because
-   `-ldflags -X` can only set string vars).
-2. In the `/healthz` handler, parse `failHealthz` once (at package init or
+1. In `main.go`, declare `var healthy = "true"` (string, because
+   `-ldflags -X` can only set string vars). The default `"true"` matches the
+   natural state — no mental flip when reading either the variable or the
+   build command.
+2. In the `/healthz` handler, parse `healthy` once (at package init or
    per-request — either is fine for this scale) and return `500` with body
-   `unhealthy` if true.
-3. Build two binaries: one with the default, one with `failHealthz=true`.
+   `unhealthy` if it is not `"true"`.
+3. Build two binaries: one with the default, one with `healthy=false`.
 
 Done when:
 
@@ -169,8 +172,8 @@ Work:
    - `TestRootHandler` — builds a `gin` engine, registers the root route,
      uses `httptest.NewRecorder`, asserts status 200 and JSON body shape.
      Sets the package-level `version` to a known value in the test.
-   - `TestHealthzHealthy` — `failHealthz="false"`, expect 200 + `ok`.
-   - `TestHealthzFailing` — `failHealthz="true"`, expect 500 + `unhealthy`.
+   - `TestHealthzHealthy` — `healthy="true"`, expect 200 + `ok`.
+   - `TestHealthzFailing` — `healthy="false"`, expect 500 + `unhealthy`.
 2. Run `go test ./app -v`.
 
 Done when:
@@ -197,7 +200,7 @@ Work:
 VERSION=$(cat app/VERSION)
 CGO_ENABLED=0 go build \
   -trimpath \
-  -ldflags "-s -w -X main.version=${VERSION} -X main.failHealthz=false" \
+  -ldflags "-s -w -X main.version=${VERSION} -X main.healthy=true" \
   -o gitops-api \
   ./app
 ```
@@ -232,7 +235,7 @@ After Phase 7 is done, the API is ready for the rest of the project:
   app VM under `systemd`. That work happens in `ansible/`, not in `app/`.
 - **Milestone M3** (PRD §9 / plan.md Phase C) is wiring Phase 7's build
   command into `jenkins/Jenkinsfile.build`.
-- **Milestone M6** (PRD §9 / plan.md Phase F) is when the `failHealthz=true`
+- **Milestone M6** (PRD §9 / plan.md Phase F) is when the `healthy=false`
   build matters — for the rollback demo. The API code itself is already
   done at that point.
 
@@ -247,7 +250,7 @@ If you want to do this in one session:
 Phase 1  → ~15 min   (mod init, gin hello world)
 Phase 2  → ~10 min   (split handlers, add /healthz)
 Phase 3  → ~10 min   (ldflags version)
-Phase 4  → ~15 min   (ldflags failHealthz)
+Phase 4  → ~15 min   (ldflags healthy)
 Phase 5  → ~20 min   (graceful shutdown)
 Phase 6  → ~20 min   (3 tests)
 Phase 7  → ~10 min   (build flags, verify on EC2 later)

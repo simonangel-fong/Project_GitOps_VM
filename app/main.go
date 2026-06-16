@@ -3,6 +3,9 @@ package main
 
 import "github.com/gin-gonic/gin"
 
+var version = "dev"
+var healthy = "true"
+
 func main() {
 	r := gin.Default()
 

@@ -107,9 +107,11 @@ The version string is read at build time from `app/VERSION` via Go `ldflags`
 (`-X main.version=$(cat VERSION)`). This makes the version visible at runtime
 without any config-file lookup — the binary is the source of its own truth.
 
-`/healthz` includes a hidden failure switch (env var `FAIL_HEALTHZ=true`) so a
-broken release can be simulated by committing a bad version and watching the
-rollback trigger. Required for the demo.
+`/healthz` includes a hidden failure switch baked in at build time via
+`-ldflags "-X main.healthy=false"` so a broken release can be simulated by
+committing a bad version and watching the rollback trigger. Required for the
+demo. Default is `healthy=true`; a `healthy=false` build is the only way to
+trip `/healthz` into returning 500.
 
 ## Source of Truth: `deploy/release.yaml`
 
@@ -254,8 +256,8 @@ A working demo, in order:
 5. **Happy path:** bump `app/VERSION` to `0.2.0`, push. Build runs. Then
    bump `deploy/release.yaml` to `0.2.0`, push. Deploy runs all three phases,
    promotes. Show `curl LB/ | jq` returning `0.2.0`.
-6. **Rollback path:** prepare a `0.3.0` build with `FAIL_HEALTHZ=true` baked
-   into the systemd unit for the canary. Bump release to `0.3.0`. Deploy
+6. **Rollback path:** prepare a `0.3.0` build with `-X main.healthy=false` baked
+   into the binary for the canary. Bump release to `0.3.0`. Deploy
    starts the 20% phase; `/healthz` returns 500; pipeline trips after 3
    failures; nginx weights revert; canary VM symlink swaps back to 0.2.0;
    Jenkins build red. Final `curl LB/` still returns 0.2.0.
