@@ -273,6 +273,54 @@ A suggested implementation order so you have a working slice early:
    `VERSION` file, `ldflags` build. Terraform for 4 EC2s. Bootstrap Ansible
    playbook. Manual `scp` + `systemctl` to confirm the binary runs on an
    app VM. _Output: API reachable on an app VM._
+
+   **Sub-phases (this is where Ansible enters the picture):**
+
+   - **A1 — Jump becomes the controller.** `user_data` on the jump instance
+     installs `git`, `ansible-core`, `java-17`, and `jenkins` (native package,
+     not Docker). Same script clones this repo to `/opt/gitops-vm/` and
+     drops the fleet private key (`gitops-vm.pem`) into `~ec2-user/.ssh/`
+     with `0400` perms so jump can SSH onward to the fleet. _Output: SSH
+     to jump, `which ansible` works, `systemctl status jenkins` is
+     active._
+
+   - **A2 — Inventory rendering from Terraform.** Terraform writes
+     `ansible/inventory.ini` via `local_file` using the live private IPs
+     of lb / app-vm1 / app-vm2. This closes the Terraform→Ansible loop
+     without dynamic inventory (deferred to v2 per
+     [aws_design.md §10](aws_design.md)). _Output: `ansible -i
+     ansible/inventory.ini all -m ping` from jump succeeds against all
+     three fleet hosts._
+
+   - **A3 — Bootstrap playbook.** `ansible/bootstrap.yml` runs once from
+     jump against the fleet: creates the `appuser` account, scaffolds
+     `/opt/app/{releases,current}/` on app VMs, writes the systemd unit
+     stub, installs `nginx` on lb. _Output: `appuser` exists on all
+     fleet hosts; nginx serves a 502 on lb (no upstream yet, expected)._
+
+   ### Why Ansible runs on jump, not on the laptop
+
+   Production ops shops don't run `ansible-playbook` from individual
+   laptops — versions drift between operators, the audit trail lives in
+   shell history, secrets sprawl everywhere. The canonical pattern is a
+   **dedicated control node** that hosts Ansible, the inventory, and the
+   CI/CD runner. All convergence flows from that one place. This project
+   uses jump as the control node and Jenkins on jump as the trigger,
+   matching the on-prem "utility server" model called out in
+   [aws_design.md §2](aws_design.md).
+
+   The laptop is read-only after `terraform apply`: edit code, push,
+   open the Jenkins UI via SSH tunnel (`jenkins_tunnel` output in
+   [04_output.tf](../infra/04_output.tf)), watch pipelines run.
+
+   ### Bootstrap chicken-and-egg
+
+   Ansible can't install itself on jump before jump exists. `user_data`
+   is the one piece that has to be imperative (cloud-init script).
+   Everything else from A2 onward is Ansible. This is exactly the
+   "golden template" boundary [aws_design.md §7](aws_design.md) — the
+   v2 Packer path will bake `user_data`'s install steps into an AMI,
+   shrinking `user_data` to ~3 lines (clone repo, start Jenkins).
 2. **Phase B — Static nginx LB.** nginx upstream with hardcoded 50/50 split.
    Confirm round-robin via `curl` and the `version` field. _Output: LB
    serves both VMs._

@@ -25,5 +25,28 @@ terraform apply -auto-approve
 ## Connect jump
 
 ```sh
-ssh -i "ansible.pem" ec2-user@ip_jump
+terraform output -raw ssh_jump
+# ssh -i keys/gitops-vm.pem ec2-user@16.52.229.58
+
+ssh -i keys/gitops-vm.pem ec2-user@16.52.229.58
+```
+
+## Login jenkins
+
+```sh
+# Confirm jenkins
+systemctl status jenkins      # active (running)
+
+# forward jenkins UI
+terraform output -raw jenkins_tunnel
+# ssh -i keys/gitops-vm.pem -L 8080:localhost:8080 ec2-user@16.52.229.58
+
+# init pwd
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+```
+
+## Confirm Ansible
+
+```sh
+
 ```

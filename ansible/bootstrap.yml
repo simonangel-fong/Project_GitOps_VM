@@ -1,0 +1,55 @@
+---
+# bootstrap.yml — Phase A2 / A3 of plan.md.
+#
+# Run from jump, after cloud-init has finished:
+#   cd /home/ec2-user/Project_GitOps_VM/ansible
+#   ansible all -m ping            # sanity check the inventory
+#   ansible-playbook bootstrap.yml # run this file
+#
+# What this does, in order:
+#   1. Confirm SSH + Python on every fleet host.
+#   2. Install nginx on lb (no config yet — Phase B does the templating).
+#   3. Create appuser + /opt/app/{releases,current} on app VMs.
+#
+# Heavier role-based playbooks (deploy, rollback) come in later phases.
+
+- name: A2 — Connectivity check (every fleet host)
+  hosts: fleet
+  gather_facts: false
+  tasks:
+    - name: Ping
+      ansible.builtin.ping:
+
+- name: A3a — LB base setup
+  hosts: lb
+  become: true
+  tasks:
+    - name: Install nginx
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+    - name: Enable nginx (do not start — no upstream config yet)
+      ansible.builtin.systemd:
+        name: nginx
+        enabled: true
+
+- name: A3b — App VM base setup
+  hosts: app
+  become: true
+  tasks:
+    - name: Create appuser
+      ansible.builtin.user:
+        name: appuser
+        shell: /bin/bash
+        create_home: true
+
+    - name: Create /opt/app layout
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: appuser
+        group: appuser
+        mode: "0755"
+      loop:
+        - /opt/app
+        - /opt/app/releases
