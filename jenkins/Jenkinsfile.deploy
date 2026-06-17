@@ -42,9 +42,10 @@ pipeline {
           env.HC_INTERVAL       = release.health_check.interval_seconds.toString()
           env.HC_THRESHOLD      = release.health_check.failure_threshold.toString()
 
-          // Stash the phases list as JSON so we can re-parse later in the
-          // canary loop stage (env vars must be strings).
-          writeFile file: '.phases.json', text: groovy.json.JsonOutput.toJson(release.phases)
+          // Round-trip phases through JSON via the sandboxed writeJSON /
+          // readJSON so we can re-parse in the canary loop stage. (env vars
+          // are strings only; groovy.json.JsonOutput is blocked by sandbox.)
+          writeJSON file: '.phases.json', json: release.phases
 
           echo """
           === release.yaml parsed ===
