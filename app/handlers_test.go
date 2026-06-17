@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -60,6 +61,37 @@ func TestHealthzHealthy(t *testing.T) {
 	}
 	if w.Body.String() != "ok" {
 		t.Errorf("body: got %q, want %q", w.Body.String(), "ok")
+	}
+}
+
+func TestMetricsEndpoint(t *testing.T) {
+	initMetrics()
+
+	r := gin.New()
+	r.Use(metricsMiddleware())
+	r.GET("/healthz", healthzHandler)
+	r.GET("/metrics", metricsHandler)
+
+	// Drive one request through the middleware so the counter has something to report.
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"gitops_api_requests_total",
+		"gitops_api_request_duration_seconds",
+		"gitops_api_info",
+		"gitops_api_healthy",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics body missing %q", want)
+		}
 	}
 }
 

@@ -48,7 +48,8 @@ func main() {
 Terminal A:
 
 ```sh
-go run ./app
+cd app
+go run .
 # [GIN-debug] [WARNING] Creating an Engine instance with the Logger and Recovery middleware already attached.
 
 # [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
@@ -158,6 +159,35 @@ curl -i http://localhost:8080/healthz
 # Content-Length: 2
 
 # ok
+
+curl -i http://localhost:8080/metrics
+# HTTP/1.1 200 OK
+# Content-Type: text/plain; version=0.0.4; charset=utf-8; escaping=underscores
+# Date: Wed, 17 Jun 2026 15:24:01 GMT
+# Transfer-Encoding: chunked
+
+# # HELP gitops_api_healthy 1 if the instance reports healthy, 0 otherwise.
+# # TYPE gitops_api_healthy gauge
+# gitops_api_healthy{host="Simon-Laptop"} 1
+# # HELP gitops_api_info Build info — always 1, labels carry version and host.
+# # TYPE gitops_api_info gauge
+# gitops_api_info{host="Simon-Laptop",version="dev"} 1
+# # HELP gitops_api_request_duration_seconds HTTP request duration in seconds, labelled by matched route and host.
+# # TYPE gitops_api_request_duration_seconds histogram
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="0.005"} 1
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="0.01"} 1
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="0.025"} 1
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="0.05"} 1
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="0.1"} 1
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="0.25"} 1
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="0.5"} 1
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="1"} 1
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="2.5"} 1
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="5"} 1
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="10"} 1
+# gitops_api_request_duration_seconds_bucket{host="Simon-Laptop",path="/",le="+Inf"} 1
+# gitops_api_request_duration_seconds_sum{host="Simon-Laptop",path="/"} 0
+# gitops_api_request_duration_seconds_count{host="Simon-Laptop",path="/"} 1
 ```
 
 - Confirm files created / changed

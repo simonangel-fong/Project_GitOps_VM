@@ -17,13 +17,19 @@ var version = "dev"
 var healthy = "true"
 
 func main() {
+	initMetrics()
+
 	r := gin.Default()
+	r.Use(metricsMiddleware())
 
 	// GET /
 	r.GET("/", rootHandler)
 
 	// GET /healthz
 	r.GET("/healthz", healthzHandler)
+
+	// GET /metrics — prometheus scrape endpoint
+	r.GET("/metrics", metricsHandler)
 
 	srv := &http.Server{
 		Addr:    ":8080",
