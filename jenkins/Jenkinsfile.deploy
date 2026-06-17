@@ -41,9 +41,10 @@ pipeline {
           env.STABLE_HOSTS_CSV  = release.stable_hosts.join(',')
           env.HC_INTERVAL       = release.health_check.interval_seconds.toString()
           env.HC_THRESHOLD      = release.health_check.failure_threshold.toString()
-          // Demo affordance: if release.yaml declares build_unhealthy: true,
+          // Demo affordance: if release.yaml declares build_healthy: false,
           // bake healthy=false into the binary so /healthz returns 500.
-          env.BUILD_UNHEALTHY   = (release.build_unhealthy ?: false).toString()
+          // Default true (a missing field reads as "yes, healthy").
+          env.BUILD_HEALTHY     = ((release.build_healthy != null ? release.build_healthy : true)).toString()
 
           // Round-trip phases through JSON via the sandboxed writeJSON /
           // readJSON so we can re-parse in the canary loop stage. (env vars
@@ -69,8 +70,8 @@ pipeline {
           cd app
           go version
           LDFLAGS="-X main.version=${APP_VERSION}"
-          if [ "${BUILD_UNHEALTHY}" = "true" ]; then
-            echo "!!! build_unhealthy=true — baking healthy=false into the binary !!!"
+          if [ "${BUILD_HEALTHY}" = "false" ]; then
+            echo "!!! build_healthy=false — baking healthy=false into the binary (failure demo) !!!"
             LDFLAGS="${LDFLAGS} -X main.healthy=false"
           fi
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
@@ -93,7 +94,7 @@ pipeline {
               --limit "${CANARY_HOST}" \
               -e binary_src="${WORKSPACE}/gitops-api" \
               -e app_version="${APP_VERSION}" \
-              -e expect_unhealthy="${BUILD_UNHEALTHY}"
+              -e expect_healthy="${BUILD_HEALTHY}"
           '''
         }
       }
