@@ -174,14 +174,24 @@ pipeline {
           sh '''
             set -eu
             echo "=== Promoting stable hosts: ${STABLE_HOSTS_CSV} ==="
-            # Convert "app-vm2,app-vm3" -> "app-vm2,app-vm3" (Ansible --limit
-            # accepts comma list directly).
+            # mark_last_good=true here so a successful promote records this
+            # version as the rollback target for any future failed deploy.
             ansible-playbook \
               -i "${WORKSPACE}/ansible/inventory.ini" \
               "${WORKSPACE}/ansible/deploy.yml" \
               --limit "${STABLE_HOSTS_CSV}" \
               -e binary_src="${WORKSPACE}/gitops-api" \
-              -e app_version="${APP_VERSION}"
+              -e app_version="${APP_VERSION}" \
+              -e mark_last_good=true
+
+            echo "=== Also marking canary host as last-good (it's on the same version now) ==="
+            ansible-playbook \
+              -i "${WORKSPACE}/ansible/inventory.ini" \
+              "${WORKSPACE}/ansible/deploy.yml" \
+              --limit "${CANARY_HOST}" \
+              -e binary_src="${WORKSPACE}/gitops-api" \
+              -e app_version="${APP_VERSION}" \
+              -e mark_last_good=true
           '''
         }
       }
@@ -208,16 +218,35 @@ pipeline {
       echo "[success] gitops-api ${env.APP_VERSION} promoted to all app VMs."
     }
     failure {
-      echo "[failure] Aborted — reverting LB traffic to stable-only (canary weight = 0)."
-      // No sshagent here because we're in post — fleet-key credential
-      // re-binds inside the closure.
+      echo "[failure] Aborted — draining LB, rolling canary back to last-good, restoring balance."
       sshagent(credentials: ['fleet-key']) {
         sh '''
+          set +e   # let each step report independently; don't abort the post block
+
+          echo "[failure] Step 1/3: drain LB traffic from canary"
           ansible-playbook \
             -i "${WORKSPACE}/ansible/inventory.ini" \
             "${WORKSPACE}/ansible/nginx.yml" \
-            -e weight_canary=0 \
-          || echo "[failure] nginx revert also failed — manual fix needed"
+            -e weight_canary=0
+          DRAIN_RC=$?
+
+          echo "[failure] Step 2/3: roll canary back to last-good version"
+          ansible-playbook \
+            -i "${WORKSPACE}/ansible/inventory.ini" \
+            "${WORKSPACE}/ansible/rollback.yml"
+          ROLLBACK_RC=$?
+
+          if [ $ROLLBACK_RC -eq 0 ]; then
+            echo "[failure] Step 3/3: reset LB to balanced (both VMs healthy on last-good)"
+            ansible-playbook \
+              -i "${WORKSPACE}/ansible/inventory.ini" \
+              "${WORKSPACE}/ansible/nginx.yml" \
+              -e weight_canary=50
+          else
+            echo "[failure] Skipping LB rebalance — rollback failed; leaving canary drained for manual intervention"
+          fi
+
+          echo "[failure] Recovery summary: drain rc=$DRAIN_RC, rollback rc=$ROLLBACK_RC"
         '''
       }
     }

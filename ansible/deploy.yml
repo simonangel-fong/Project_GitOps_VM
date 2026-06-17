@@ -152,6 +152,20 @@
           - root.json.version == app_version
         fail_msg: "{{ inventory_hostname }} reports {{ root.json.version }}, expected {{ app_version }}"
 
+    # Phase F: write the last-known-good version pointer so rollback knows
+    # where to point the symlink if a future deploy fails. Only fired when
+    # the caller (Jenkins promote stage) sets mark_last_good=true — we
+    # don't want the canary pre-deploy to be marked good before it's been
+    # through the full phase loop.
+    - name: Record this version as last-good
+      ansible.builtin.copy:
+        content: "{{ app_version }}\n"
+        dest: /opt/app/last-good
+        owner: appuser
+        group: appuser
+        mode: "0644"
+      when: mark_last_good | default(false) | bool
+
   handlers:
     - name: Reload systemd
       ansible.builtin.systemd:

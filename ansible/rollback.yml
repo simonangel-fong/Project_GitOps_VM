@@ -1,0 +1,108 @@
+---
+# rollback.yml — Phase F.
+#
+# Reads /opt/app/last-good on the canary host, points /opt/app/current at
+# /opt/app/releases/{last-good}, restarts gitops-api. Used by the
+# Jenkinsfile's post { failure } block after the LB drain.
+#
+# Run from jump (manual):
+#   ansible-playbook rollback.yml --limit app-vm1
+#
+# Limitation: if the broken deploy reused an existing release dir (same
+# version as last-good), the prior binary on disk was overwritten in place
+# and there's nothing to revert to. The play asserts this is not the case
+# and fails with a clear message. Production-grade per-build release dirs
+# (e.g. /opt/app/releases/{version}/{build}/) is v2.
+
+- name: Roll back gitops-api to last-good version
+  hosts: app_canary
+  become: true
+  any_errors_fatal: true
+
+  pre_tasks:
+    - name: Read last-good version
+      ansible.builtin.slurp:
+        src: /opt/app/last-good
+      register: last_good_slurp
+
+    - name: Decode last-good version
+      ansible.builtin.set_fact:
+        last_good_version: "{{ last_good_slurp.content | b64decode | trim }}"
+
+    - name: Read currently-deployed version (from current symlink target)
+      ansible.builtin.stat:
+        path: /opt/app/current
+      register: current_link
+
+    - name: Derive current version from symlink target
+      ansible.builtin.set_fact:
+        current_version: "{{ current_link.stat.lnk_target | basename }}"
+
+    - name: Show rollback target
+      ansible.builtin.debug:
+        msg: "Rolling back {{ inventory_hostname }}: {{ current_version }} -> {{ last_good_version }}"
+
+    - name: Refuse to rollback to the same version (binary overwritten in place)
+      ansible.builtin.fail:
+        msg: |
+          last-good ({{ last_good_version }}) equals current ({{ current_version }}).
+          The release directory was overwritten in place — there is no prior
+          binary to revert to. Build a fresh binary at a different version and
+          deploy normally to recover.
+      when: last_good_version == current_version
+
+    - name: Confirm the last-good release directory still exists
+      ansible.builtin.stat:
+        path: "/opt/app/releases/{{ last_good_version }}/gitops-api"
+      register: last_good_bin
+
+    - name: Fail if last-good binary is missing
+      ansible.builtin.fail:
+        msg: "/opt/app/releases/{{ last_good_version }}/gitops-api not found"
+      when: not last_good_bin.stat.exists
+
+  tasks:
+    - name: Swap /opt/app/current back to last-good
+      ansible.builtin.file:
+        src: "/opt/app/releases/{{ last_good_version }}"
+        dest: /opt/app/current
+        state: link
+        owner: appuser
+        group: appuser
+        force: true
+      notify: Restart gitops-api
+
+  post_tasks:
+    - name: Flush handlers so smoke test runs against the rolled-back binary
+      ansible.builtin.meta: flush_handlers
+
+    - name: Smoke test — GET /healthz on rolled-back host
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:8080/healthz"
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      retries: 6
+      delay: 2
+      register: healthz
+      until: healthz.status == 200
+
+    - name: Smoke test — confirm rolled-back version is serving
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:8080/"
+        return_content: true
+      delegate_to: localhost
+      become: false
+      register: root
+
+    - name: Assert rolled-back version matches last-good
+      ansible.builtin.assert:
+        that:
+          - root.json.version == last_good_version
+        fail_msg: "{{ inventory_hostname }} reports {{ root.json.version }}, expected {{ last_good_version }} after rollback"
+
+  handlers:
+    - name: Restart gitops-api
+      ansible.builtin.systemd:
+        name: gitops-api
+        state: restarted
