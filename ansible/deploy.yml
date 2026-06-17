@@ -87,6 +87,10 @@
         owner: appuser
         group: appuser
         mode: "0755"
+      # Re-deploying the same version writes a new binary into the existing
+      # release dir; the symlink doesn't change, so the restart must be
+      # notified from THIS task (not the symlink swap below).
+      notify: Restart gitops-api
 
     - name: Atomically swap /opt/app/current to this release
       ansible.builtin.file:
