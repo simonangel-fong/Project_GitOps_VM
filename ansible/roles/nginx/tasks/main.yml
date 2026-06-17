@@ -1,0 +1,35 @@
+---
+# roles/nginx/tasks/main.yml
+#
+# Templates the upstream config + ensures nginx is serving. Idempotent:
+# template change triggers a config test then a graceful reload.
+
+- name: Ensure app VM hostnames resolve via /etc/hosts on lb
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} gitops-vm app upstream"
+    block: |
+      {{ hostvars['app-vm1'].ansible_host }}  app-vm1
+      {{ hostvars['app-vm2'].ansible_host }}  app-vm2
+
+- name: Disable default ubuntu nginx site (claims port 80)
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Template gitops upstream + server block
+  ansible.builtin.template:
+    src: upstream.conf.j2
+    dest: /etc/nginx/conf.d/gitops.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: nginx -t -c /etc/nginx/nginx.conf -p /etc/nginx
+  notify: Reload nginx
+
+- name: Ensure nginx is enabled and running
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started

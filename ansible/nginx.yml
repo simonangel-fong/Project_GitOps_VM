@@ -1,0 +1,41 @@
+---
+# nginx.yml — Phase B: static 50/50 LB.
+#
+# Phase E will re-invoke this playbook (or its role) with different
+# weight_canary values during the canary phase loop. For Phase B we hardcode
+# 50/50 and confirm round-robin via curl from the laptop.
+#
+# Run from jump:
+#   cd ~/Project_GitOps_VM/ansible
+#   ansible-playbook nginx.yml
+
+- name: Configure nginx LB
+  hosts: lbs
+  become: true
+
+  vars:
+    weight_canary: 50
+    weight_stable: 50
+
+  pre_tasks:
+    - name: Sanity-check weights sum to 100
+      ansible.builtin.assert:
+        that: weight_canary + weight_stable == 100
+        fail_msg: "weight_canary ({{ weight_canary }}) + weight_stable ({{ weight_stable }}) must equal 100"
+
+  roles:
+    - nginx
+
+  post_tasks:
+    - name: Smoke test — LB returns 200 from /
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}/"
+        return_content: true
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      register: lb_root
+
+    - name: Show LB response
+      ansible.builtin.debug:
+        msg: "LB at {{ ansible_host }} returned: {{ lb_root.content }}"
