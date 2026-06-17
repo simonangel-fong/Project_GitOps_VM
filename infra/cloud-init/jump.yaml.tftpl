@@ -44,7 +44,7 @@ write_files:
     permissions: "0600"
     defer: true
     content: |
-      Host lb app-vm1 app-vm2 ${lb_private_ip} ${app_vm1_private_ip} ${app_vm2_private_ip}
+      Host lb app-vm1 app-vm2 mon ${lb_private_ip} ${app_vm1_private_ip} ${app_vm2_private_ip} ${mon_private_ip}
         User ubuntu
         IdentityFile /home/ubuntu/.ssh/${project_name}.pem
         StrictHostKeyChecking accept-new
@@ -58,6 +58,7 @@ write_files:
       ${lb_private_ip}       lb
       ${app_vm1_private_ip}  app-vm1
       ${app_vm2_private_ip}  app-vm2
+      ${mon_private_ip}      mon
 
 runcmd:
   # /etc/hosts fleet entries (idempotent)

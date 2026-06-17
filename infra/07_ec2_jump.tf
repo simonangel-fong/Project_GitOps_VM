@@ -71,6 +71,7 @@ resource "aws_instance" "jump" {
     lb_private_ip          = aws_instance.lb.private_ip
     app_vm1_private_ip     = aws_instance.app_vm1.private_ip
     app_vm2_private_ip     = aws_instance.app_vm2.private_ip
+    mon_private_ip         = aws_instance.mon.private_ip
   })
 
   # Replace the instance when the bootstrap script changes

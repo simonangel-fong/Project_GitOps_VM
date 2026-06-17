@@ -17,4 +17,5 @@ locals {
   # mgmt subnet
   subnet_mgmt_cidr = "10.0.90.0/24"
   ec2_jump_cidr    = "10.0.90.10"
+  ec2_mon_cidr     = "10.0.90.20"
 }

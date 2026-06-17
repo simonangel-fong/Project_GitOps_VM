@@ -34,9 +34,13 @@ resource "local_file" "ansible_inventory" {
     app_canary
     app_stable
 
+    [mons]
+    mon ansible_host=${aws_instance.mon.private_ip}
+
     [fleet:children]
     lbs
     apps
+    mons
 
     [all:vars]
     ansible_user=ubuntu

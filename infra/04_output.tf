@@ -26,6 +26,11 @@ output "app_vm2_private_ip" {
   description = "Private IP of app-vm2 (stable). Reach via jump."
 }
 
+output "mon_private_ip" {
+  value       = aws_instance.mon.private_ip
+  description = "Private IP of mon (Prometheus + Grafana). Reach via jump."
+}
+
 # ##############################
 # SSH command helpers
 # ##############################
@@ -51,8 +56,25 @@ output "ssh_app_vm2" {
   description = "SSH from workstation to app-vm2 (stable) via jump (ProxyJump)."
 }
 
+output "ssh_mon" {
+  value       = "ssh -i infra/keys/${local.project_name}.pem -J ubuntu@${aws_eip.jump.public_ip} ubuntu@${aws_instance.mon.private_ip}"
+  description = "SSH from workstation to mon (Prometheus + Grafana) via jump (ProxyJump)."
+}
+
 # Laptop -> Jenkins UI (SSH tunnel; Jenkins is bound to localhost:8080 on jump)
 output "jenkins_tunnel" {
   value       = "ssh -i infra/keys/${local.project_name}.pem -L 8080:localhost:8080 ubuntu@${aws_eip.jump.public_ip}"
   description = "Open SSH tunnel so http://localhost:8080 hits Jenkins on jump."
+}
+
+# Laptop -> Grafana on mon (SSH tunnel through jump)
+output "grafana_tunnel" {
+  value       = "ssh -i infra/keys/${local.project_name}.pem -L 3000:${aws_instance.mon.private_ip}:3000 ubuntu@${aws_eip.jump.public_ip}"
+  description = "Open SSH tunnel so http://localhost:3000 hits Grafana on mon."
+}
+
+# Laptop -> Prometheus on mon (SSH tunnel through jump)
+output "prometheus_tunnel" {
+  value       = "ssh -i infra/keys/${local.project_name}.pem -L 9090:${aws_instance.mon.private_ip}:9090 ubuntu@${aws_eip.jump.public_ip}"
+  description = "Open SSH tunnel so http://localhost:9090 hits Prometheus on mon."
 }
