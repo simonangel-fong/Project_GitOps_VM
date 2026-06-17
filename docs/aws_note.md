@@ -7,16 +7,15 @@ aws --profile gitops-vm sts get-caller-identity
 # Confirm the state bucket exists (from Phase 0)
 aws --profile gitops-vm s3 ls s3://simonangelfong-terraform-backend
 
-cd infra
-terraform init -backend-config=backend.hcl
+terraform -chdir=infra/ init -backend-config=backend.hcl
 
 # Validate syntax
-terraform validate
+terraform -chdir=infra/ validate
 # terraform plan -out=tfplan
 # terraform show -json tfplan > plan.json
+# terraform -chdir=infra/ apply tfplan
 
-terraform apply tfplan
-terraform apply -auto-approve
+terraform -chdir=infra/ apply -auto-approve
 
 ```
 
@@ -25,10 +24,10 @@ terraform apply -auto-approve
 ## Connect jump
 
 ```sh
-terraform output -raw ssh_jump
-# ssh -i keys/gitops-vm.pem ec2-user@16.52.229.58
+terraform -chdir=infra/ output -raw ssh_jump
+# ssh -i infra/keys/gitops-vm.pem ec2-user@16.52.229.58
 
-ssh -i keys/gitops-vm.pem ec2-user@16.52.229.58
+sssh -i infra/keys/gitops-vm.pem ec2-user@16.52.229.58
 ```
 
 ## Login jenkins
@@ -38,7 +37,7 @@ ssh -i keys/gitops-vm.pem ec2-user@16.52.229.58
 systemctl status jenkins      # active (running)
 
 # forward jenkins UI
-terraform output -raw jenkins_tunnel
+terraform -chdir=infra/ output -raw jenkins_tunnel
 # ssh -i keys/gitops-vm.pem -L 8080:localhost:8080 ec2-user@16.52.229.58
 
 # init pwd
@@ -68,7 +67,7 @@ ansible-playbook deploy.yml \
   -e binary_src=/tmp/gitops-api \
   -e app_version=$VERSION
 ```
- 
+
 - deploy
 
 ```sh
@@ -109,9 +108,9 @@ ansible-playbook bootstrap.yml
 # changed: [app-vm1] => (item=/opt/app/releases)
 
 # PLAY RECAP *****************************************************************************************************************
-# app-vm1                    : ok=4    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
-# app-vm2                    : ok=4    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
-# lb                         : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0  
+# app-vm1                    : ok=4    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+# app-vm2                    : ok=4    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+# lb                         : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
 
 
 VERSION=$(cat ../app/VERSION)
@@ -123,7 +122,7 @@ ansible-playbook deploy.yml -e binary_src=/tmp/gitops-api -e app_version=$VERSIO
 # ok: [app-vm1]
 
 # TASK [Sanity-check required extra-vars] ***********************************************************************************************************
-# ok: [app-vm1] => changed=false 
+# ok: [app-vm1] => changed=false
 #   msg: All assertions passed
 
 # TASK [Sanity-check the binary exists on the controller] *******************************************************************************************
@@ -159,7 +158,7 @@ ansible-playbook deploy.yml -e binary_src=/tmp/gitops-api -e app_version=$VERSIO
 # ok: [app-vm1 -> localhost]
 
 # TASK [Assert version matches] *********************************************************************************************************************
-# ok: [app-vm1] => changed=false 
+# ok: [app-vm1] => changed=false
 #   msg: All assertions passed
 
 # PLAY [Deploy gitops-api to app VMs] ***************************************************************************************************************
@@ -168,7 +167,7 @@ ansible-playbook deploy.yml -e binary_src=/tmp/gitops-api -e app_version=$VERSIO
 # ok: [app-vm2]
 
 # TASK [Sanity-check required extra-vars] ***********************************************************************************************************
-# ok: [app-vm2] => changed=false 
+# ok: [app-vm2] => changed=false
 #   msg: All assertions passed
 
 # TASK [Sanity-check the binary exists on the controller] *******************************************************************************************
@@ -204,12 +203,12 @@ ansible-playbook deploy.yml -e binary_src=/tmp/gitops-api -e app_version=$VERSIO
 # ok: [app-vm2 -> localhost]
 
 # TASK [Assert version matches] *********************************************************************************************************************
-# ok: [app-vm2] => changed=false 
+# ok: [app-vm2] => changed=false
 #   msg: All assertions passed
 
 # PLAY RECAP ****************************************************************************************************************************************
-# app-vm1                    : ok=12   changed=5    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
-# app-vm2                    : ok=12   changed=5    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+# app-vm1                    : ok=12   changed=5    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0
+# app-vm2                    : ok=12   changed=5    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0
 ```
 
 - confirm
