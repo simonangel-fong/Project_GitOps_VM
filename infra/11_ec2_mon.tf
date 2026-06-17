@@ -40,10 +40,10 @@ resource "aws_vpc_security_group_ingress_rule" "mon_grafana_from_jump" {
   to_port                      = 3000
 }
 
-resource "aws_vpc_security_group_egress_rule" "mon_egress_vpc_only" {
+resource "aws_vpc_security_group_egress_rule" "mon_egress_all" {
   security_group_id = aws_security_group.mon.id
-  description       = "Egress restricted to VPC CIDR - mon scrapes are internal only."
-  cidr_ipv4         = aws_vpc.main.cidr_block
+  description       = "All egress - mon needs apt for Prometheus/Grafana install (same posture as jump)."
+  cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
 }
 

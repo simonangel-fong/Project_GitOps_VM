@@ -35,12 +35,22 @@ curl http://localhost:8080/metrics
 ## Mon instance
 
 ```sh
-terraform -chdir=infra output ssh_mon
+terraform -chdir=infra apply -auto-approve
 
 terraform -chdir=infra output ssh_jump
 
+# on jump
+ansible mon -m ping
+# mon | SUCCESS => {
+#     "changed": false,
+#     "ping": "pong"
+# }
 
-ssh -i infra/keys/gitops-vm.pem ubuntu@<jump_public_ip> 'echo "10.0.90.20  mon" | sudo tee -a /etc/hosts'
+# install
+ansible-playbook mon.yml
 
 
+ssh mon 'systemctl is-active prometheus grafana-server'
+# active
+# active
 ```

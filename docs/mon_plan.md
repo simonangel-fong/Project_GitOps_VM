@@ -98,13 +98,13 @@ New `sg-mon`. Modifications to two existing SGs.
 | `sg-mon`  | ingress 22    | from `sg-jump`                    | Ansible-from-jump bootstrap                        |
 | `sg-mon`  | ingress 9090  | from `sg-jump`                    | Prometheus UI via SSH tunnel (debugging)           |
 | `sg-mon`  | ingress 3000  | from `sg-jump`                    | Grafana UI via SSH tunnel (the actual demo signal) |
-| `sg-mon`  | egress        | VPC CIDR only (`10.0.0.0/16`)     | Same restriction as `sg-app`; no internet egress   |
+| `sg-mon`  | egress        | All (`0.0.0.0/0`)                 | Needs apt for Prometheus/Grafana install — same posture as `sg-jump` |
 | `sg-app`  | +ingress 8080 | from `sg-mon`                     | Prometheus scrapes `app-vm1:8080/metrics`           |
 | `sg-jump` | unchanged     |                                   | Tunnels to mon work as a function of `sg-mon` ingress, not jump egress |
 
-`sg-mon` egress is VPC-only — same posture as `sg-app`. Mon does not need
-the internet at runtime (all packages are installed by Ansible, all scrapes
-are VPC-internal).
+`sg-mon` egress is open to `0.0.0.0/0` — same posture as `sg-jump`. Ansible
+installs Prometheus and Grafana from apt mirrors at run time, which needs
+egress to the internet. Scrapes themselves are still VPC-internal.
 
 ## 7. File Layout
 
