@@ -1,12 +1,21 @@
 # {{ ansible_managed }}
-#
 # Weighted upstream + reverse-proxy server block.
-# Parameters: weight_canary, weight_stable (must sum to 100).
-# Hosts: app-vm1, app-vm2 (from /etc/hosts seeded by Ansible).
+# Parameter: weight_canary (0..100). weight_stable is derived as (100-wc).
+# nginx detail: weight=0 is invalid; we use `down` for fully-excluded backends.
+{% set wc = weight_canary | int %}
+{% set ws = 100 - wc %}
 
 upstream gitops_api {
-    server app-vm1:8080 weight={{ weight_canary }};
-    server app-vm2:8080 weight={{ weight_stable }};
+{% if wc == 0 %}
+    server app-vm1:8080 down;
+    server app-vm2:8080 weight={{ ws }};
+{% elif ws == 0 %}
+    server app-vm1:8080 weight={{ wc }};
+    server app-vm2:8080 down;
+{% else %}
+    server app-vm1:8080 weight={{ wc }};
+    server app-vm2:8080 weight={{ ws }};
+{% endif %}
 }
 
 server {
