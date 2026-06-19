@@ -36,16 +36,16 @@ terraform -chdir=infra/ destroy -auto-approve
 ```sh
 # get the updated ssh cmd
 terraform -chdir=infra/ output -raw ssh_jump
-# ssh -i infra/keys/gitops-vm.pem ubuntu@16.52.14.216
+# ssh -i infra/keys/gitops-vm.pem ubuntu@3.96.25.11
 
-ssh -i infra/keys/gitops-vm.pem ubuntu@16.52.14.216
+ssh -i infra/keys/gitops-vm.pem ubuntu@3.96.25.11
 
 # Confirm Ansible
 cd ~/runbook-ansible-gitops-vm/ansible
 ansible all -m ping -o
 # jump | SUCCESS => {"changed": false,"ping": "pong"}
-# lb | SUCCESS => {"changed": false,"ping": "pong"}
 # app-vm1 | SUCCESS => {"changed": false,"ping": "pong"}
+# lb | SUCCESS => {"changed": false,"ping": "pong"}
 # mon | SUCCESS => {"changed": false,"ping": "pong"}
 # app-vm2 | SUCCESS => {"changed": false,"ping": "pong"}
 ```
