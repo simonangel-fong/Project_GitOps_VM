@@ -31,7 +31,7 @@ git push
 
 ![alternative02](./pic/test_alternative02.png)
 
-![alternative02](./pic/test_alternative_grafana01.png)
+![alternative01](./pic/test_alternative_grafana01.png)
 
 - Confirm
   - app rollback
@@ -49,6 +49,8 @@ curl -s 3.98.220.13
 curl -s 3.98.220.13
 # {"app":"VM GitOps Practices","host":"ip-10-0-20-12","version":"0.3.1"}
 ```
+
+---
 
 ## Revert
 
@@ -68,3 +70,5 @@ git add .
 git commit -m "revert to release: 0.3.1"
 git push
 ```
+
+![alternative02](./pic/test_alternative_grafana02.png)

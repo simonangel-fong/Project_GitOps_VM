@@ -79,6 +79,8 @@ ssh -i infra/keys/gitops-vm.pem -L 9090:10.0.90.20:9090 ubuntu@16.52.14.216
 # http://localhost:9090/classic/targets
 ```
 
+![prometheus_ui](./pic/prom_ui.png)
+
 ---
 
 ### Grafana UI
@@ -92,3 +94,5 @@ ssh -i infra/keys/gitops-vm.pem -L 3000:10.0.90.20:3000 ubuntu@16.52.14.216
 # grafana UI
 # http://localhost:3000
 ```
+
+![grafana_login](./pic/grafana_login.png)

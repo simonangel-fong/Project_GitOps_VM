@@ -40,3 +40,5 @@ sudo cat /var/lib/jenkins/secrets/initialAdminPassword
 - Set pipeline
   - url: https://github.com/simonangel-fong/Project_GitOps_VM.git
   - pipeline path: jenkins/Jenkinsfile.deploy
+
+![jenkins_ui](./pic/jenkins_ui.png)
