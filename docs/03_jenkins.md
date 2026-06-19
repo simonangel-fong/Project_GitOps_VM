@@ -12,7 +12,7 @@
 ```sh
 # forward jenkins UI
 terraform -chdir=infra/ output -raw jenkins_tunnel
-# ssh -i infra/keys/gitops-vm.pem -L 8080:localhost:8080 ubuntu@16.52.14.216
+# ssh -i infra/keys/gitops-vm.pem -L 8080:localhost:8080 ubuntu@3.96.25.11
 
 # Confirm jenkins
 systemctl status jenkins      # active (running)
@@ -25,7 +25,7 @@ systemctl status jenkins      # active (running)
 #         CPU: 21.337s
 #      CGroup: /system.slice/jenkins.service
 
-ssh -i infra/keys/gitops-vm.pem -L 8080:localhost:8080 ubuntu@16.52.14.216
+ssh -i infra/keys/gitops-vm.pem -L 8080:localhost:8080 ubuntu@3.96.25.11
 
 # init pwd
 sudo cat /var/lib/jenkins/secrets/initialAdminPassword
@@ -35,6 +35,7 @@ sudo cat /var/lib/jenkins/secrets/initialAdminPassword
   - sshagent
   - Pipeline Utility Steps
   - Stage View
+  - Blue Ocean
 - credential
   - fleet-key
 - Set pipeline

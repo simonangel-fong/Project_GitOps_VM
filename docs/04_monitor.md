@@ -72,9 +72,9 @@ ssh mon 'systemctl is-active prometheus grafana-server'
 ```sh
 # prom UI
 terraform -chdir=infra/ output -raw prometheus_tunnel
-# ssh -i infra/keys/gitops-vm.pem -L 9090:10.0.90.20:9090 ubuntu@16.52.14.216
+# ssh -i infra/keys/gitops-vm.pem -L 9090:10.0.90.20:9090 ubuntu@3.96.25.11
 
-ssh -i infra/keys/gitops-vm.pem -L 9090:10.0.90.20:9090 ubuntu@16.52.14.216
+ssh -i infra/keys/gitops-vm.pem -L 9090:10.0.90.20:9090 ubuntu@3.96.25.11
 
 # http://localhost:9090/classic/targets
 ```
@@ -87,9 +87,9 @@ ssh -i infra/keys/gitops-vm.pem -L 9090:10.0.90.20:9090 ubuntu@16.52.14.216
 
 ```sh
 terraform -chdir=infra/ output -raw grafana_tunnel
-# ssh -i infra/keys/gitops-vm.pem -L 3000:10.0.90.20:3000 ubuntu@16.52.14.216
+# ssh -i infra/keys/gitops-vm.pem -L 3000:10.0.90.20:3000 ubuntu@3.96.25.11
 
-ssh -i infra/keys/gitops-vm.pem -L 3000:10.0.90.20:3000 ubuntu@16.52.14.216
+ssh -i infra/keys/gitops-vm.pem -L 3000:10.0.90.20:3000 ubuntu@3.96.25.11
 
 # grafana UI
 # http://localhost:3000
