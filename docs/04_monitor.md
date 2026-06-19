@@ -1,3 +1,15 @@
+# GitOps VM: Monitoring - Prometheus + Grafana
+
+[Back](../README.md)
+
+- [GitOps VM: Monitoring - Prometheus + Grafana](#gitops-vm-monitoring---prometheus--grafana)
+  - [Golang metrics](#golang-metrics)
+  - [Login Monitor Instance](#login-monitor-instance)
+    - [Prometheus UI](#prometheus-ui)
+    - [Grafana UI](#grafana-ui)
+
+---
+
 ## Golang metrics
 
 ```sh
@@ -32,7 +44,7 @@ curl http://localhost:8080/metrics
 
 ---
 
-## Mon instance
+## Login Monitor Instance
 
 ```sh
 terraform -chdir=infra apply -auto-approve
@@ -40,26 +52,43 @@ terraform -chdir=infra apply -auto-approve
 terraform -chdir=infra output ssh_jump
 
 # on jump
-ansible mon -m ping
-# mon | SUCCESS => {
-#     "changed": false,
-#     "ping": "pong"
-# }
+cd ~/Project_GitOps_VM/ansible/
+ansible mon -m ping -o
+# mon | SUCCESS => {"changed": false,"ping": "pong"}
 
 # install
 ansible-playbook mon.yml
 
-
+# confirm prometheus grafana is active
 ssh mon 'systemctl is-active prometheus grafana-server'
 # active
 # active
+```
 
+---
+
+### Prometheus UI
+
+```sh
 # prom UI
-ssh -i infra/keys/gitops-vm.pem -L 9090:10.0.90.20:9090 ubuntu@16.52.182.125
+terraform -chdir=infra/ output -raw prometheus_tunnel
+# ssh -i infra/keys/gitops-vm.pem -L 9090:10.0.90.20:9090 ubuntu@16.52.14.216
 
-# http://localhost:9090/targets
+ssh -i infra/keys/gitops-vm.pem -L 9090:10.0.90.20:9090 ubuntu@16.52.14.216
+
+# http://localhost:9090/classic/targets
+```
+
+---
+
+### Grafana UI
+
+```sh
+terraform -chdir=infra/ output -raw grafana_tunnel
+# ssh -i infra/keys/gitops-vm.pem -L 3000:10.0.90.20:3000 ubuntu@16.52.14.216
+
+ssh -i infra/keys/gitops-vm.pem -L 3000:10.0.90.20:3000 ubuntu@16.52.14.216
 
 # grafana UI
-ssh -i infra/keys/gitops-vm.pem -L 3000:10.0.90.20:3000 ubuntu@16.52.182.125
-
+# http://localhost:3000
 ```

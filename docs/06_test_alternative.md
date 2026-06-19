@@ -63,6 +63,6 @@ grep -E 'version|build_healthy' deploy/release.yaml
 
 # Commit + push
 git add .
-git commit -m "release: 0.3.1"
+git commit -m "revert to release: 0.3.1"
 git push
 ```

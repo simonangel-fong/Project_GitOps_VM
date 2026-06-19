@@ -30,6 +30,8 @@ git push
 
 ![happy02](./pic/test_happy02.png)
 
+![happy_grafana](./pic/test_happy_grafana.png)
+
 - Confirm
 
 ```sh
