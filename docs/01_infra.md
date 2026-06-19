@@ -51,8 +51,3 @@ ansible all -m ping -o
 ```
 
 ---
-
-
-
-
-
