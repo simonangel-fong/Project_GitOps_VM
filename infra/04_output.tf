@@ -78,3 +78,8 @@ output "prometheus_tunnel" {
   value       = "ssh -i infra/keys/${local.project_name}.pem -L 9090:${aws_instance.mon.private_ip}:9090 ubuntu@${aws_eip.jump.public_ip}"
   description = "Open SSH tunnel so http://localhost:9090 hits Prometheus on mon."
 }
+
+output "test_url" {
+  value       = "curl -s ${aws_instance.lb.public_ip}"
+  description = "Test app via lb."
+}
