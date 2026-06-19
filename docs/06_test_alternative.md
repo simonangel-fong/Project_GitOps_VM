@@ -31,6 +31,8 @@ git push
 
 ![alternative02](./pic/test_alternative02.png)
 
+![alternative02](./pic/test_alternative_grafana01.png)
+
 - Confirm
   - app rollback
 
